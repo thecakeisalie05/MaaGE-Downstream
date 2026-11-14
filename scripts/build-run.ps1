@@ -70,9 +70,12 @@ function Export-SessionDiagnostics {
         [datetime]$StartedAt,
         [datetime]$FinishedAt,
         [string]$Revision,
-        [string]$Configuration
+        [string]$Configuration,
+        [string]$SessionId
     )
-    $instanceLogs = Join-Path (Join-Path (Join-Path $Client.DataRoot 'instances') $Client.InstanceId) 'logs'
+    $instanceRoot = Join-Path (Join-Path $Client.DataRoot 'instances') $Client.InstanceId
+    $instanceLogs = Join-Path $instanceRoot 'logs'
+    $instanceScreenshots = Join-Path $instanceRoot 'screenshots'
     $reportDir = Join-Path (Split-Path $root -Parent) 'profile-reports'
     New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
     $stamp = $StartedAt.ToUniversalTime().ToString('yyyyMMdd-HHmmss')
@@ -99,6 +102,112 @@ function Export-SessionDiagnostics {
             }
         } else {
             Write-Warning "Instance logs folder not found: $instanceLogs"
+        }
+
+        $screenshots = @()
+        if (Test-Path -LiteralPath $instanceScreenshots -PathType Container) {
+            $screenshotPattern = '^screenshot-' + [regex]::Escape($SessionId) + '-[0-9]+\.png
+            started_utc = $StartedAt.ToUniversalTime().ToString('o')
+            ended_utc = $FinishedAt.ToUniversalTime().ToString('o')
+            git_revision = $Revision
+            build_configuration = $Configuration
+            instance_id = $Client.InstanceId
+            screenshot_session_id = $SessionId
+            files = @($included | ForEach-Object { $_.Name })
+            screenshots = @($screenshots | ForEach-Object { $_.Name })
+            note = 'Client profiler captures CPU wall timing, not GPU execution. Logs may contain private details.'
+        } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $tempDir 'run.json') -Encoding UTF8
+        Compress-Archive -Path (Join-Path $tempDir '*') -DestinationPath $archivePath -CompressionLevel Optimal -ErrorAction Stop
+        Write-Host "Diagnostic ZIP: $archivePath" -ForegroundColor Green
+        Write-Host "Captured $($included.Count) log/profile file(s) and $($screenshots.Count) screenshot(s)."
+        Write-Host 'Review all contents, especially logs and screenshots, before sharing.'
+    }
+    finally {
+        Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Wait-And-Archive {
+    param(
+        [System.Diagnostics.Process]$LauncherProcess,
+        [datetime]$StartedAt,
+        [string]$Revision,
+        [string]$SessionId
+    )
+    Write-Host 'Waiting for MaaGE Client startup and exit to package diagnostic output...'
+    $client = $null
+    while (-not $client) {
+        $client = Get-ClientDetails -StartedAt $StartedAt
+        if ($client) { break }
+        $LauncherProcess.Refresh()
+        if ($LauncherProcess.HasExited) {
+            Write-Warning 'Launcher exited without a detected Client. No game profile was captured.'
+            return
+        }
+        Start-Sleep -Seconds 1
+    }
+    Write-Host "Tracking Client PID $($client.ProcessId) for instance $($client.InstanceId)."
+    while (Get-Process -Id $client.ProcessId -ErrorAction SilentlyContinue) {
+        Start-Sleep -Seconds 1
+    }
+    Start-Sleep -Milliseconds 500
+    Export-SessionDiagnostics -Client $client -StartedAt $StartedAt -FinishedAt (Get-Date) -Revision $Revision -Configuration $Configuration -SessionId $SessionId
+}
+
+Push-Location $root
+try {
+    Update-Source
+    if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+        throw 'CMake 3.21+ must be installed and available on PATH.'
+    }
+    $cache = Join-Path $root 'cmake/windows-msvc-x64/CMakeCache.txt'
+    if (-not (Test-Path -LiteralPath $cache -PathType Leaf)) {
+        Write-Host "Configuring MaaGE ($preset)..."
+        Invoke-CheckedCommand -Name 'cmake' -Arguments @('--preset', $preset)
+    }
+
+    Write-Host "Building MaaGE Launcher and Client ($Configuration)..."
+    Invoke-CheckedCommand -Name 'cmake' -Arguments @('--build', '--preset', $buildPreset, '--target', 'maage_launcher', 'maage_client_manifest')
+    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+        throw "Built Launcher not found: $launcher"
+    }
+
+    $packages = @(Get-ChildItem -LiteralPath $bin -Directory |
+        Where-Object { $_.Name -like 'MaaGE-Client-*-Windows-*' } |
+        Where-Object {
+            (Test-Path -LiteralPath (Join-Path $_.FullName 'maage-client.exe') -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path $_.FullName 'maage-client.json') -PathType Leaf)
+        })
+    if ($packages.Count -eq 0) { throw "No complete Client package found under $bin." }
+    $package = $packages |
+        Sort-Object { (Get-Item -LiteralPath (Join-Path $_.FullName 'maage-client.json')).LastWriteTimeUtc } -Descending |
+        Select-Object -First 1
+    $clientExecutable = Join-Path $package.FullName 'maage-client.exe'
+    Write-Host "Launching MaaGE with Client package: $clientExecutable"
+
+    $env:MAAGE_PROFILE = '1'
+    $env:MAAGE_PREFER_VULKAN = '1'
+    $sessionId = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $env:MAAGE_SCREENSHOT_SESSION = $sessionId
+    $revision = (& git rev-parse --short HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { $revision = 'unknown' }
+    $startedAt = Get-Date
+    $launcherProcess = Start-Process -FilePath $launcher -ArgumentList @('--dev-launch-client', ('"' + $clientExecutable + '"')) -WorkingDirectory (Split-Path $launcher -Parent) -PassThru
+    Wait-And-Archive -LauncherProcess $launcherProcess -StartedAt $startedAt -Revision $revision -SessionId $sessionId
+}
+finally {
+    Pop-Location
+}
+
+            $screenshots = @(Get-ChildItem -LiteralPath $instanceScreenshots -File -ErrorAction Stop |
+                Where-Object { $_.Name -match $screenshotPattern })
+            if ($screenshots.Count -gt 0) {
+                $screenshotFolder = Join-Path $tempDir 'screenshots'
+                New-Item -ItemType Directory -Path $screenshotFolder | Out-Null
+                foreach ($shot in $screenshots) {
+                    Copy-Item -LiteralPath $shot.FullName -Destination (Join-Path $screenshotFolder $shot.Name) -ErrorAction Stop
+                }
+            }
         }
         [ordered]@{
             started_utc = $StartedAt.ToUniversalTime().ToString('o')
