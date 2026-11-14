@@ -1798,27 +1798,30 @@ choose_world:
             rendered = maage_renderer_draw_frame(renderer, cache.draws, draw_count, matrix, ui_draw, trace);
             if (maage_status_failed(rendered)) goto done;
             if (maage_status_code(rendered) == MAAGE_STATUS_SUCCESS) maage_client_item_entities_submitted(item_entities);
-            if (screenshot_requested && maage_status_code(rendered) == MAAGE_STATUS_SUCCESS) {
-                maage_status shot;
-                if (!screenshot_dir[0]) {
-                    shot = maage_instance_resolve_path(instance, MAAGE_INSTANCE_FOLDER_SCREENSHOTS, NULL, screenshot_dir, sizeof(screenshot_dir));
-                    if (!maage_status_failed(shot)) shot = maage_storage_directories(screenshot_dir);
-                } else shot = maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_WRITE, 0);
-                if (!maage_status_failed(shot)) {
-                    shot = maage_client_screenshot_save(screenshot_dir, screenshot_session, screenshot_count + 1U,
-                        screenshot_file, sizeof(screenshot_file));
-                    if (!maage_status_failed(shot)) {
-                        ++screenshot_count;
-                        maage_log_info("maage.client.screenshot", "F2 screenshot %u saved to %s.", screenshot_count, screenshot_file);
-                    }
-                }
-                if (maage_status_failed(shot)) maage_log_status(MAAGE_LOG_WARNING, "maage.client.screenshot", shot, "F2 screenshot capture failed (game window must be visible and unobstructed).");
-            }
+
         } else {
             profile_marks.draw_begin = profiler.active ? maage_time_monotonic_seconds() : 0;
             rendered = MAAGE_STATUS_VALUE(MAAGE_STATUS_NOOP, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPDATE, 0);
         }
         profile_marks.draw_end = profiler.active ? maage_time_monotonic_seconds() : 0;
+        /* Screenshot capture may spend hundreds of milliseconds reading desktop pixels
+         * and encoding PNG. It is frame overhead, NOT renderer API time. */
+        if (screenshot_requested && maage_status_code(rendered) == MAAGE_STATUS_SUCCESS) {
+            maage_status shot;
+            if (!screenshot_dir[0]) {
+                shot = maage_instance_resolve_path(instance, MAAGE_INSTANCE_FOLDER_SCREENSHOTS, NULL, screenshot_dir, sizeof(screenshot_dir));
+                if (!maage_status_failed(shot)) shot = maage_storage_directories(screenshot_dir);
+            } else shot = maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_WRITE, 0);
+            if (!maage_status_failed(shot)) {
+                shot = maage_client_screenshot_save(screenshot_dir, screenshot_session, screenshot_count + 1U,
+                    screenshot_file, sizeof(screenshot_file));
+                if (!maage_status_failed(shot)) {
+                    ++screenshot_count;
+                    maage_log_info("maage.client.screenshot", "F2 screenshot %u saved to %s.", screenshot_count, screenshot_file);
+                }
+            }
+            if (maage_status_failed(shot)) maage_log_status(MAAGE_LOG_WARNING, "maage.client.screenshot", shot, "F2 screenshot capture failed (game window must be visible and unobstructed).");
+        }
         frame_end = maage_time_monotonic_seconds();
         if (frame_end < 0.0) goto clock_failed;
         if (first_count && maage_status_code(rendered) == MAAGE_STATUS_SUCCESS) {
