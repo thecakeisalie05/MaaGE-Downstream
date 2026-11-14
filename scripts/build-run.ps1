@@ -49,6 +49,7 @@ try {
         Select-Object -First 1
     $client = Join-Path $package.FullName 'maage-client.exe'
     Write-Host "Starting MaaGE Launcher with Client package: $client"
+    $env:MAAGE_PROFILE = '1'
     Start-Process -FilePath $launcher -ArgumentList @('--dev-launch-client', ('"' + $client + '"')) -WorkingDirectory (Split-Path $launcher -Parent)
 }
 finally {
