@@ -22,6 +22,7 @@
 #include "ui/ui.h"
 #include "ui/splash.h"
 #include "debug.h"
+#include "profiler.h"
 #include "interaction.h"
 #include "prediction.h"
 #include "item_entities.h"
@@ -749,6 +750,9 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     unsigned int camera_mode = MAAGE_CAMERA_FIRST;
     maage_client_item_entities *item_entities = NULL;
     maage_client_debug debug;
+    maage_client_profiler profiler;
+    maage_client_profile_marks profile_marks;
+    char profile_logs[MAAGE_PATH_CAPACITY];
     maage_client_mesh_stats mesh_stats;
     maage_client_ui_input ui_input;
     const maage_render_ui_data *ui_draw;
@@ -808,6 +812,7 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     memset(&player_view, 0, sizeof(player_view));
     memset(&collision, 0, sizeof(collision));
     memset(&debug, 0, sizeof(debug));
+    memset(&profiler, 0, sizeof(profiler));
     memset(&outbox, 0, sizeof(outbox));
     outbox.diagnostics = maage_log_enabled("maage.client.latency", MAAGE_LOG_VERBOSE) && getenv("MAAGE_WORLD_DIAGNOSTICS") && !strcmp(getenv("MAAGE_WORLD_DIAGNOSTICS"), "1");
     memset(&latest, 0, sizeof(latest));
@@ -835,6 +840,9 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     else options.radius = video_options.render_distance;
     strcpy(directory, maage_client_storage_data_root());
     maage_log_info("maage.client.instance", "Instance: %s (%s).", maage_instance_get_info(instance)->name, maage_instance_get_info(instance)->id);
+    if (!maage_status_failed(maage_instance_resolve_path(instance, MAAGE_INSTANCE_FOLDER_LOGS, NULL, profile_logs, sizeof(profile_logs))) &&
+        !maage_status_failed(maage_storage_directories(profile_logs)))
+        maage_client_profiler_open(&profiler, profile_logs);
     result = maage_window_system_create(MAAGE_WINDOW_AUTO, &system, trace);
     if (maage_status_failed(result)) goto window_failed;
     maage_window_config_init(&window_config);
@@ -1094,6 +1102,7 @@ choose_world:
     if (audio_notice) maage_client_ui_notify(ui, audio_notice, last);
     maage_log_info("maage.client", "Connected to integrated server.");
     for (;;) {
+        profile_marks.begin = profiler.active ? maage_time_monotonic_seconds() : 0;
         maage_status_trace_init(trace);
         MAAGE_STATUS_TRACE(trace, 0, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_UPDATE);
         result = maage_window_poll_events(system, 0);
@@ -1155,6 +1164,7 @@ choose_world:
             maage_client_ui_notify(ui, operation, now);
             maage_log_status(MAAGE_LOG_WARNING, "maage.client.ui", operation, "Presentation UI rejected an action.");
         }
+        profile_marks.input = profiler.active ? maage_time_monotonic_seconds() : 0;
         changing_mode = maage_client_ui_window_mode_changing(ui);
         if (was_options_visible && !maage_client_ui_options_visible(ui)) options_save_needed = 1;
         if (was_changing_mode && !changing_mode) {
@@ -1683,7 +1693,13 @@ choose_world:
             }
             cache.draws[draw_count++] = interaction.mesh;
         }
+        profile_marks.scene = profiler.active ? maage_time_monotonic_seconds() : 0;
         debug_text = maage_client_ui_debug_visible(ui) ? maage_client_debug_collect(&debug, now, &visual_snapshot, options.radius, !active, renderer, &mesh_stats, visual_stats.resident_storage_bytes, maage_content_biomes(content)) : NULL;
+        if (debug_text && profiler.active && debug.text.right_count + 3 <= MAAGE_CLIENT_UI_DEBUG_LINES) {
+            sprintf(debug.text.right[debug.text.right_count++], "Profile: work %.1f ms | p95 %.1f | max %.1f", profiler.last_frame_ms, profiler.p95_ms, profiler.max_ms);
+            sprintf(debug.text.right[debug.text.right_count++], "Input %.1f | scene %.1f | setup %.1f ms", profiler.last_input_ms, profiler.last_scene_ms, profiler.last_setup_ms);
+            sprintf(debug.text.right[debug.text.right_count++], "Renderer %.1f | upload %.1f ms (CPU wall)", profiler.last_render_ms, profiler.last_upload_ms);
+        }
         maage_client_ui_notice_time(ui, now);
         operation = maage_client_ui_draw(ui, debug_text, &ui_draw);
         if (maage_status_failed(operation)) goto done;
@@ -1707,11 +1723,15 @@ choose_world:
             rendered = maage_client_item_entities_update(item_entities, session, visual_world, &visual_snapshot, alpha, eye, now, player_view.draws, player_view.count, cache.slots, cache.capacity, trace);
             if (maage_status_failed(rendered)) goto done;
             if (maage_status_is_warning(rendered)) maage_client_ui_notify(ui, rendered, now);
+            profile_marks.draw_begin = profiler.active ? maage_time_monotonic_seconds() : 0;
             rendered = maage_renderer_draw_frame(renderer, cache.draws, draw_count, matrix, ui_draw, trace);
             if (maage_status_failed(rendered)) goto done;
             if (maage_status_code(rendered) == MAAGE_STATUS_SUCCESS) maage_client_item_entities_submitted(item_entities);
-        } else
+        } else {
+            profile_marks.draw_begin = profiler.active ? maage_time_monotonic_seconds() : 0;
             rendered = MAAGE_STATUS_VALUE(MAAGE_STATUS_NOOP, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPDATE, 0);
+        }
+        profile_marks.draw_end = profiler.active ? maage_time_monotonic_seconds() : 0;
         frame_end = maage_time_monotonic_seconds();
         if (frame_end < 0.0) goto clock_failed;
         if (first_count && maage_status_code(rendered) == MAAGE_STATUS_SUCCESS) {
@@ -1744,6 +1764,7 @@ choose_world:
          * affected views once, before those cache replacements can be drawn.
          * Failed local preparation retains the complete old draw state; do not
          * replace its bases with geometry from the uncommitted correction. */
+        profile_marks.upload_begin = profiler.active ? maage_time_monotonic_seconds() : 0;
         if (maage_status_code(rendered) == MAAGE_STATUS_SUCCESS && !prediction.dirty && prediction.applied_generation == prediction.generation) {
             operation = maage_client_stream_meshes(visual_world, renderer, atlas, &cache, &mesh_activity, &prediction, &options, &debug, cx, cz);
             if (maage_status_failed(operation)) goto done;
@@ -1753,6 +1774,11 @@ choose_world:
         }
         frame_end = maage_time_monotonic_seconds();
         if (frame_end < 0.0) goto clock_failed;
+        profile_marks.end = frame_end;
+        maage_client_profiler_record(&profiler, &profile_marks, raw_elapsed, latest.tick, latest.world_stats.loaded,
+            latest.world_stats.pending, latest.world_stats.running_jobs + visual_stats.running_jobs,
+            mesh_activity.status.uploaded_this_frame, mesh_activity.status.budget_ms,
+            maage_status_code(rendered) == MAAGE_STATUS_SUCCESS);
         tick_count = latest.tick >= last_seen_tick ? latest.tick - last_seen_tick : 0;
         last_seen_tick = latest.tick;
         maage_client_debug_frame(&debug, frame_end, raw_elapsed, maage_status_code(rendered) == MAAGE_STATUS_SUCCESS, tick_count, 0.0);
@@ -1824,6 +1850,7 @@ window_failed:
     outcome = MAAGE_STATUS_PROPAGATE(trace, result, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_UPDATE);
     failure_message = "Native window/input cannot continue.";
 done:
+    maage_client_profiler_close(&profiler);
     /* Capture the failing occurrence before saving options overwrites operation.
      * An explicitly retained Server/window/clock failure remains authoritative. */
     if (splash.close_requested) ok = 1;
