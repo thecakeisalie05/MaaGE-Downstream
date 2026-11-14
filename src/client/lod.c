@@ -136,9 +136,8 @@ static void lod_write_face(maage_mesh_vertex *vertices, unsigned int *indices, s
     ++*faces;
 }
 
-/* One flat top, exposed step faces, and a separate water plane per patch.
- * Geometric capacity is bounded at six quads/patch. No sloped triangles or
- * canopy heights; the original near meshes stay authoritative for appearance. */
+/* One flat top, exposed step faces, a separate water plane and exposed
+ * water edges per patch. Maximum ten quads/patch; no smooth canopy triangles. */
 static maage_status lod_build(maage_world *world, const maage_biome_registry *biomes, int cx, int cz, int quality,
     maage_mesh_vertex **vertices, unsigned int **indices, maage_mesh_data *data) {
     const maage_block_registry *registry = maage_world_registry(world);
@@ -159,7 +158,7 @@ static maage_status lod_build(maage_world *world, const maage_biome_registry *bi
     memset(data, 0, sizeof(*data));
     step = quality == 0 ? 1U : (quality == 1 ? 2U : 4U);
     patches = 16U / step;
-    capacity = (size_t) patches * patches * 6U;
+    capacity = (size_t) patches * patches * 10U;
     v = (maage_mesh_vertex *) calloc(capacity * 4U, sizeof(*v));
     ix = (unsigned int *) malloc(capacity * 6U * sizeof(*ix));
     if (!v || !ix) {
@@ -189,9 +188,21 @@ static maage_status lod_build(maage_world *world, const maage_biome_registry *bi
                 lod_write_face(v, ix, &count, center->ground_state, center->biome, faces[side],
                     x0, z0, x1, z1, (float) neighbor_heights[side], (float) center->ground, 0);
         }
-        if (center->water_state && center->water > center->ground)
+        if (center->water_state && center->water > center->ground) {
             lod_write_face(v, ix, &count, center->water_state, center->biome, MAAGE_FACE_POSITIVE_Y,
                 x0, z0, x1, z1, 0.0f, (float) center->water - 0.10f, 1);
+            for (side = 0U; side < 4U; ++side) {
+                int floor;
+                neighbor = &samples[(int) z + dz[side]][(int) x + dx[side]];
+                if (!neighbor->present) continue;
+                floor = neighbor->ground;
+                if (neighbor->water_state && neighbor->water > floor) floor = neighbor->water;
+                if (floor < center->ground) floor = center->ground;
+                if (floor < center->water)
+                    lod_write_face(v, ix, &count, center->water_state, center->biome, faces[side],
+                        x0, z0, x1, z1, (float) floor, (float) center->water - 0.10f, 1);
+            }
+        }
     }
     if (!count) {
         free(v);
