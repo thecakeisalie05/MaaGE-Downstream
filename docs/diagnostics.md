@@ -28,7 +28,7 @@ startup/teardown effects. A pause, VSync, OS scheduling or frame cap can affect
 the inter-frame interval even when CPU work is short. "Renderer" measures the
 calling thread's elapsed time inside the renderer API; it is **not** a GPU
 timestamp and does not distinguish GPU execution, driver waits, or presentation
-queue blocking. The profiler is not a CPU sampling profiler and does not identify
+queue blocking. The authoritative integrated/dedicated Server independently records 5-second mean tick breakdowns (gameplay, entity/container work, World tick, publication), peak tick cost and counts exceeding the 50 ms simulation budget in the Client/Server log via `maage.server.profiler`. It warns on the first and every twenty-fifth slow tick. Server sampling does not yet attribute background job durations.\n\nThe profiler is not a CPU sampling profiler and does not identify
 individual worker-thread hot functions. The raw CSV is the primary artifact for
 comparing regressions; compare identical world/seed, camera path, render distance,
 renderer, build type, and capture duration. Capture overhead includes clock
