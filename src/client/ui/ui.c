@@ -118,6 +118,9 @@ maage_status maage_client_ui_create(maage_renderer *renderer, maage_window *wind
     ui->last_nonwindowed_mode = ui->confirmed_fullscreen_style = MAAGE_CLIENT_BORDERLESS;
     ui->fps_step = 26;
     ui->render_distance = MAAGE_CLIENT_RENDER_DISTANCE_DEFAULT;
+    ui->lod_enabled = 0;
+    ui->lod_distance = MAAGE_CLIENT_LOD_DISTANCE_DEFAULT;
+    ui->lod_quality = 1;
     ui->render_distance_max = MAAGE_CLIENT_RENDER_DISTANCE_SLIDER_MAX;
     ui->vsync = 1;
     ui->view_bobbing = 1;
@@ -372,6 +375,10 @@ maage_status maage_client_ui_apply_options(maage_client_ui *ui, const maage_clie
     if (ui->fov_degrees > 110) ui->fov_degrees = 110;
     ui->fps_step = options->max_fps ? options->max_fps / 10 - 1 : 26;
     ui->render_distance = options->render_distance;
+    ui->lod_enabled = options->lod_enabled != 0;
+    ui->lod_distance = options->lod_distance;
+    if (ui->lod_distance < 1 || ui->lod_distance > MAAGE_CLIENT_LOD_DISTANCE_MAX) ui->lod_distance = MAAGE_CLIENT_LOD_DISTANCE_DEFAULT;
+    ui->lod_quality = options->lod_quality >= 0 && options->lod_quality <= 2 ? options->lod_quality : 1;
     if (ui->render_distance < 1 || ui->render_distance > MAAGE_WORLD_MAX_RADIUS) ui->render_distance = MAAGE_CLIENT_RENDER_DISTANCE_DEFAULT;
     /* Keep an explicitly larger CLI/INI choice representable by this slider. */
     ui->render_distance_max = ui->render_distance > MAAGE_CLIENT_RENDER_DISTANCE_SLIDER_MAX ? ui->render_distance : MAAGE_CLIENT_RENDER_DISTANCE_SLIDER_MAX;
@@ -411,6 +418,9 @@ void maage_client_ui_get_options(const maage_client_ui *ui, maage_client_options
     options->fov_degrees = ui->fov_degrees;
     options->max_fps = ui->fps_step == 26 ? 0 : (ui->fps_step + 1) * 10;
     options->render_distance = ui->render_distance;
+    options->lod_enabled = ui->lod_enabled;
+    options->lod_distance = ui->lod_distance;
+    options->lod_quality = ui->lod_quality;
     options->vsync = ui->vsync;
     options->view_bobbing = ui->view_bobbing;
     options->gui_scale = ui->requested_scale;
@@ -428,7 +438,7 @@ void maage_client_ui_get_options(const maage_client_ui *ui, maage_client_options
 
 int maage_client_ui_options_visible(const maage_client_ui *ui) {
     maage_client_ui_screen_id id = maage_client_ui_current(ui);
-    return id == MAAGE_CLIENT_UI_OPTIONS || id == MAAGE_CLIENT_UI_VIDEO_SETTINGS || id == MAAGE_CLIENT_UI_SOUND_SETTINGS || id == MAAGE_CLIENT_UI_CONTROLS;
+    return id == MAAGE_CLIENT_UI_OPTIONS || id == MAAGE_CLIENT_UI_VIDEO_SETTINGS || id == MAAGE_CLIENT_UI_LOD_SETTINGS || id == MAAGE_CLIENT_UI_SOUND_SETTINGS || id == MAAGE_CLIENT_UI_CONTROLS;
 }
 int maage_client_ui_window_mode_changing(const maage_client_ui *ui) {
     return ui && (ui->mode_pending || ui->mode_changing);
@@ -443,6 +453,9 @@ int maage_client_ui_max_fps(const maage_client_ui *ui) {
 int maage_client_ui_render_distance(const maage_client_ui *ui) {
     return ui ? ui->render_distance : MAAGE_CLIENT_RENDER_DISTANCE_DEFAULT;
 }
+int maage_client_ui_lod_enabled(const maage_client_ui *ui) { return ui ? ui->lod_enabled : 0; }
+int maage_client_ui_lod_distance(const maage_client_ui *ui) { return ui ? ui->lod_distance : MAAGE_CLIENT_LOD_DISTANCE_DEFAULT; }
+int maage_client_ui_lod_quality(const maage_client_ui *ui) { return ui ? ui->lod_quality : 1; }
 int maage_client_ui_vsync(const maage_client_ui *ui) {
     return ui ? ui->vsync : 1;
 }
@@ -607,7 +620,7 @@ maage_status maage_client_ui_draw(maage_client_ui *ui, const maage_client_ui_deb
         rectangle = ui->clip;
         if (id == MAAGE_CLIENT_UI_CONTROLS) maage_client_ui_menu_background(ui);
         else if (ui->has_snapshot) maage_client_ui_gradient(ui, rectangle, 0xC0101010UL, 0xD0101010UL);
-        else if (id == MAAGE_CLIENT_UI_OPTIONS || id == MAAGE_CLIENT_UI_VIDEO_SETTINGS || id == MAAGE_CLIENT_UI_SOUND_SETTINGS || id == MAAGE_CLIENT_UI_CONTROLS) maage_client_ui_menu_background(ui);
+        else if (id == MAAGE_CLIENT_UI_OPTIONS || id == MAAGE_CLIENT_UI_VIDEO_SETTINGS || id == MAAGE_CLIENT_UI_LOD_SETTINGS || id == MAAGE_CLIENT_UI_SOUND_SETTINGS || id == MAAGE_CLIENT_UI_CONTROLS) maage_client_ui_menu_background(ui);
         /* Only interactive content is kept within safe-area bounds; the title
          * panorama and its darkening layer must fill even the notch region. */
         ui->clip = id == MAAGE_CLIENT_UI_TITLE ? rectangle : ui->content;
