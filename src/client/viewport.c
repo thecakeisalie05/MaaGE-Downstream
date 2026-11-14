@@ -1700,7 +1700,7 @@ choose_world:
             /* Generate at most one LOD candidate/update step each frame.
              * Far columns retain exact mesh fallback until their coarse GPU
              * replacement is ready; this avoids holes during streaming. */
-            operation = maage_client_lod_step(&lod, visual_world, renderer, atlas, cache.slots, cache.capacity,
+            operation = maage_client_lod_step(&lod, visual_world, renderer, atlas, maage_content_biomes(content), cache.slots, cache.capacity,
                 cx, cz, video_options.render_distance, options.radius, video_options.lod_quality);
             if (maage_status_failed(operation)) {
                 maage_log_status(MAAGE_LOG_WARNING, "maage.client.lod", operation, "LOD build/upload failed; keeping full-resolution fallback.");
