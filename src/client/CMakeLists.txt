@@ -33,6 +33,10 @@ target_link_libraries(maage_client PRIVATE MaaGE::Render MaaGE::MinecraftAssets 
     MaaGE::Base MaaGE::World MaaGE::Instance MaaGE::Session MaaGE::Server MaaGE::Audio
     MaaGE::SoundBank MaaGE::AudioCatalog)
 if(WIN32)
+    # find_package() in src/resources is scoped to that subdirectory.
+    # The screenshot encoder uses libpng directly, so resolve its imported
+    # target in this directory before linking the Client.
+    find_package(PNG 1.6 REQUIRED)
     target_link_libraries(maage_client PRIVATE psapi user32 gdi32 PNG::PNG)
 endif()
 # A dedicated executable package on every OS; no desktop bundle or entry.
