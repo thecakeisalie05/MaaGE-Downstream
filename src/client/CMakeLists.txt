@@ -4,7 +4,7 @@ if(NOT MAAGE_CLIENT_VERSION_PRERELEASE STREQUAL "")
 endif()
 maage_client_target_architecture(MAAGE_CLIENT_ARCH)
 set(MAAGE_CLIENT_ARTIFACT "MaaGE-Client-${MAAGE_CLIENT_RELEASE}")
-add_executable(maage_client ../application/content_modules.c main.c metadata.c viewport.c frontend.c pacing.c storage_context.c options.c controls.c resources.c debug.c profiler.c lod.c interaction.c camera.c player_model.c player_view.c prediction.c models.c item_models.c item_entities.c particles.c environment.c
+add_executable(maage_client ../application/content_modules.c main.c metadata.c viewport.c frontend.c pacing.c storage_context.c options.c controls.c resources.c debug.c profiler.c lod.c screenshot.c interaction.c camera.c player_model.c player_view.c prediction.c models.c item_models.c item_entities.c particles.c environment.c
     audio_service.c audio_scene.c audio_native.c
     ui/ui.c ui/gameplay.c ui/inventory.c ui/player_preview.c ui/navigation.c ui/resources.c ui/font.c ui/draw.c ui/front.c ui/title.c ui/options.c ui/controls.c ui/splash.c)
 add_dependencies(maage_client maage_versions)
@@ -33,7 +33,7 @@ target_link_libraries(maage_client PRIVATE MaaGE::Render MaaGE::MinecraftAssets 
     MaaGE::Base MaaGE::World MaaGE::Instance MaaGE::Session MaaGE::Server MaaGE::Audio
     MaaGE::SoundBank MaaGE::AudioCatalog)
 if(WIN32)
-    target_link_libraries(maage_client PRIVATE psapi)
+    target_link_libraries(maage_client PRIVATE psapi user32 gdi32 PNG::PNG)
 endif()
 # A dedicated executable package on every OS; no desktop bundle or entry.
 set_target_properties(maage_client PROPERTIES RUNTIME_OUTPUT_DIRECTORY
