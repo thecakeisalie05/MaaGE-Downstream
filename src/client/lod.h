@@ -37,6 +37,11 @@ typedef struct maage_client_lod_source {
     maage_client_lod_mesh *mesh;
 } maage_client_lod_source;
 
+/* -1 means keep the exact chunk mesh. Transition decisions are stable
+ * per world column so movement does not produce a straight ring of pops.
+ * Quality is the mesh's grid level: 0=1 block, 1=2, 2=4. */
+int maage_client_lod_quality_at(int x, int z, int center_x, int center_z,
+    int detail_radius, int far_radius, int max_quality);
 void maage_client_lod_cancel(maage_client_lod *lod);
 void maage_client_lod_clear(maage_client_lod *lod);
 void maage_client_lod_mesh_clear(maage_client_lod_mesh *mesh);

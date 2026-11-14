@@ -5,11 +5,35 @@
 #include "maage/biome.h"
 #include "maage/geometry_materials.h"
 #include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 static int lod_distance(int a, int b) {
     return a < b ? b : a;
+}
+
+/* The first band of coarse terrain keeps one voxel per sample. Stagger
+ * cutovers by column to prevent an obvious square/ring boundary, while
+ * avoiding time-based fades or any dependency on frame rate. A farther
+ * band gradually reduces surface grid density. */
+int maage_client_lod_quality_at(int x, int z, int center_x, int center_z,
+    int detail_radius, int far_radius, int max_quality) {
+    uint32_t hash;
+    int distance = lod_distance(abs(x - center_x), abs(z - center_z));
+    int start, span;
+    if (max_quality < 0 || max_quality > 2 || far_radius <= detail_radius || distance > far_radius) return -1;
+    span = far_radius - detail_radius;
+    hash = (uint32_t) x * UINT32_C(0x9e3779b1) ^
+           (uint32_t) z * UINT32_C(0x85ebca77);
+    hash ^= hash >> 16;
+    hash *= UINT32_C(0x7feb352d);
+    hash ^= hash >> 15;
+    start = detail_radius + 1 + (int) (hash & 3U);
+    if (distance < start) return -1;
+    if (max_quality >= 2 && distance >= detail_radius + (span * 9) / 10 && distance >= start + 2) return 2;
+    if (max_quality >= 1 && distance >= detail_radius + (span * 2) / 3 && distance >= start + 1) return 1;
+    return 0;
 }
 /* LOD is deliberately block-aligned. The precipitation heightmap includes
  * leaves and structures; using it directly as elevation produces giant smooth
@@ -236,15 +260,16 @@ maage_status maage_client_lod_step(maage_client_lod *lod, maage_world *world,
     maage_status result;
     size_t i, index;
     maage_client_chunk_mesh *source;
-    int distance;
+    int distance, target_quality;
     if (!lod || !world || !renderer || !atlas || (!slots && count) || quality < 0 || quality > 2)
         return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_UPDATE, 0);
     pending = &lod->pending;
     if (pending->gpu) {
         if (pending->slot >= count || !slots[pending->slot].used ||
             slots[pending->slot].visual_revision != pending->revision ||
-            (distance = lod_distance(abs(slots[pending->slot].x - center_x), abs(slots[pending->slot].z - center_z))) <= detail_radius ||
-            distance > far_radius || pending->quality != quality) {
+            (distance = lod_distance(abs(slots[pending->slot].x - center_x), abs(slots[pending->slot].z - center_z))) > far_radius ||
+            pending->quality != maage_client_lod_quality_at(slots[pending->slot].x, slots[pending->slot].z,
+                center_x, center_z, detail_radius, far_radius, quality)) {
             maage_client_lod_cancel(lod);
             return maage_status_make(MAAGE_STATUS_NOOP, 0, MAAGE_OPERATION_UPDATE, 0);
         }
@@ -272,9 +297,12 @@ maage_status maage_client_lod_step(maage_client_lod *lod, maage_world *world,
         if (!source->used || !source->mesh ||
             !maage_world_chunk_loaded(world, source->x, source->z)) continue;
         distance = lod_distance(abs(source->x - center_x), abs(source->z - center_z));
-        if (distance <= detail_radius || distance > far_radius) continue;
-        if (source->lod.gpu && source->lod.revision == source->visual_revision && source->lod.quality == quality) continue;
-        result = lod_build(world, biomes, source->x, source->z, quality, &pending->vertices, &pending->indices, &data);
+        if (distance > far_radius) continue;
+        target_quality = maage_client_lod_quality_at(source->x, source->z, center_x, center_z,
+            detail_radius, far_radius, quality);
+        if (target_quality < 0) continue;
+        if (source->lod.gpu && source->lod.revision == source->visual_revision && source->lod.quality == target_quality) continue;
+        result = lod_build(world, biomes, source->x, source->z, target_quality, &pending->vertices, &pending->indices, &data);
         if (maage_status_failed(result)) return result;
         if (maage_status_code(result) == MAAGE_STATUS_NOOP) {
             /* Empty resident columns have no surface to decimate. Never
@@ -291,7 +319,7 @@ maage_status maage_client_lod_step(maage_client_lod *lod, maage_world *world,
         }
         pending->slot = index;
         pending->revision = source->visual_revision;
-        pending->quality = quality;
+        pending->quality = target_quality;
         lod->cursor = (index + 1) % count;
         return maage_status_make(MAAGE_STATUS_NOOP, 0, MAAGE_OPERATION_UPDATE, 0);
     }

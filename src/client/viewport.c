@@ -1784,9 +1784,12 @@ choose_world:
                 if (cache.slots[slot_index].filtered || cache.slots[slot_index].mesh) {
                     int lod_distance = abs(cache.slots[slot_index].x - cx);
                     if (abs(cache.slots[slot_index].z - cz) > lod_distance) lod_distance = abs(cache.slots[slot_index].z - cz);
-                    if (video_options.lod_enabled && lod_distance > video_options.render_distance &&
+                    int lod_quality = video_options.lod_enabled ?
+                        maage_client_lod_quality_at(cache.slots[slot_index].x, cache.slots[slot_index].z,
+                            cx, cz, video_options.render_distance, options.radius, video_options.lod_quality) : -1;
+                    if (!cache.slots[slot_index].filtered && lod_distance <= options.radius && lod_quality >= 0 &&
                         cache.slots[slot_index].lod.gpu && cache.slots[slot_index].lod.revision == cache.slots[slot_index].visual_revision &&
-                        cache.slots[slot_index].lod.quality == video_options.lod_quality) {
+                        cache.slots[slot_index].lod.quality == lod_quality) {
                         cache.draws[draw_count++] = cache.slots[slot_index].lod.gpu;
                     } else if (cache.slots[slot_index].filtered) {
                         if (cache.slots[slot_index].prediction) cache.draws[draw_count++] = cache.slots[slot_index].prediction;
@@ -1914,7 +1917,7 @@ choose_world:
         ++frames;
         if (now - diagnostic_time >= 5.0) {
             MAAGE_LOG_VERBOSE_EVENT("maage.client.server", maage_log_verbose("maage.client.server", "Tick=%lu; loaded=%u; pending=%u; ready=%u; gpu=%lu; uploads=%.1f/s; frame=%.1fms.", latest.tick, latest.world_stats.loaded, latest.world_stats.pending, latest.world_stats.ready, (unsigned long) resident_count, mesh_activity.status.uploads_per_second, frames ? (now - diagnostic_time) * 1000.0 / frames : 0.0));
-            if (video_options.lod_enabled) maage_log_info("maage.client.lod", "near_radius=%d far_radius=%d completed_coarse_meshes=%lu (far terrain currently uses full World streaming).",
+            if (video_options.lod_enabled) maage_log_info("maage.client.lod", "near_radius=%d far_radius=%d completed_coarse_meshes=%lu (staggered 1-block transition; far terrain still uses full World streaming).",
                 video_options.render_distance, options.radius, lod.completed);
             diagnostic_time = now;
             frames = 0;
