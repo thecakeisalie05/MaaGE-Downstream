@@ -272,6 +272,12 @@ maage_status maage_client_lod_step(maage_client_lod *lod, maage_world *world,
         if (source->lod.gpu && source->lod.revision == source->visual_revision && source->lod.quality == quality) continue;
         result = lod_build(world, biomes, source->x, source->z, quality, &pending->vertices, &pending->indices, &data);
         if (maage_status_failed(result)) return result;
+        if (maage_status_code(result) == MAAGE_STATUS_NOOP) {
+            /* Empty resident columns have no surface to decimate. Never
+             * submit an empty mesh to the GPU geometry preparation API. */
+            lod->cursor = (index + 1) % count;
+            return result;
+        }
         result = maage_mesh_prepare(&data, &prepared);
         if (!maage_status_failed(result)) result = maage_renderer_begin_geometry(renderer, &prepared, atlas, &pending->gpu, NULL);
         maage_mesh_preparation_destroy(prepared);
