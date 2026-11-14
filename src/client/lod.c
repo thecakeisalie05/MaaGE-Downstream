@@ -1,4 +1,5 @@
 #include "lod.h"
+#include "prediction.h"
 #include "maage/geometry.h"
 #include "maage/blocks.h"
 #include "maage/geometry_materials.h"
@@ -110,23 +111,22 @@ void maage_client_lod_clear(maage_client_lod *lod) {
 }
 maage_status maage_client_lod_step(maage_client_lod *lod, maage_world *world,
     maage_renderer *renderer, maage_render_texture *atlas,
-    const maage_client_lod_source *sources, size_t count,
+    maage_client_chunk_mesh *slots, size_t count,
     int center_x, int center_z, int detail_radius, int far_radius, int quality) {
     maage_client_lod_pending *pending;
     maage_mesh_data data;
     maage_mesh_preparation *prepared = NULL;
     maage_status result;
     size_t i, index;
-    const maage_client_lod_source *source;
+    maage_client_chunk_mesh *source;
     int distance;
-    if (!lod || !world || !renderer || !atlas || (!sources && count) || quality < 0 || quality > 2)
+    if (!lod || !world || !renderer || !atlas || (!slots && count) || quality < 0 || quality > 2)
         return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_UPDATE, 0);
     pending = &lod->pending;
     if (pending->gpu) {
-        if (pending->slot >= count || !sources[pending->slot].present ||
-            sources[pending->slot].revision != pending->revision ||
-            sources[pending->slot].mesh == NULL ||
-            (distance = lod_distance(abs(sources[pending->slot].x - center_x), abs(sources[pending->slot].z - center_z))) <= detail_radius ||
+        if (pending->slot >= count || !slots[pending->slot].used ||
+            slots[pending->slot].visual_revision != pending->revision ||
+            (distance = lod_distance(abs(slots[pending->slot].x - center_x), abs(slots[pending->slot].z - center_z))) <= detail_radius ||
             distance > far_radius || pending->quality != quality) {
             maage_client_lod_cancel(lod);
             return maage_status_make(MAAGE_STATUS_NOOP, 0, MAAGE_OPERATION_UPDATE, 0);
@@ -137,10 +137,10 @@ maage_status maage_client_lod_step(maage_client_lod *lod, maage_world *world,
             maage_client_lod_cancel(lod);
             return result;
         }
-        maage_client_lod_mesh_clear(sources[pending->slot].mesh);
-        sources[pending->slot].mesh->gpu = pending->gpu;
-        sources[pending->slot].mesh->quality = pending->quality;
-        sources[pending->slot].mesh->revision = pending->revision;
+        maage_client_lod_mesh_clear(&slots[pending->slot].lod);
+        slots[pending->slot].lod.gpu = pending->gpu;
+        slots[pending->slot].lod.quality = pending->quality;
+        slots[pending->slot].lod.revision = pending->revision;
         pending->gpu = NULL;
         free(pending->vertices);
         free(pending->indices);
@@ -151,12 +151,12 @@ maage_status maage_client_lod_step(maage_client_lod *lod, maage_world *world,
     if (!count || far_radius <= detail_radius) return maage_status_make(MAAGE_STATUS_NOOP, 0, MAAGE_OPERATION_UPDATE, 0);
     for (i = 0; i < count; ++i) {
         index = (lod->cursor + i) % count;
-        source = &sources[index];
-        if (!source->present || !source->mesh ||
+        source = &slots[index];
+        if (!source->used || !source->mesh ||
             !maage_world_chunk_loaded(world, source->x, source->z)) continue;
         distance = lod_distance(abs(source->x - center_x), abs(source->z - center_z));
         if (distance <= detail_radius || distance > far_radius) continue;
-        if (source->mesh->gpu && source->mesh->revision == source->revision && source->mesh->quality == quality) continue;
+        if (source->lod.gpu && source->lod.revision == source->visual_revision && source->lod.quality == quality) continue;
         result = lod_build(world, source->x, source->z, quality, &pending->vertices, &pending->indices, &data);
         if (maage_status_failed(result)) return result;
         result = maage_mesh_prepare(&data, &prepared);
@@ -167,7 +167,7 @@ maage_status maage_client_lod_step(maage_client_lod *lod, maage_world *world,
             return result;
         }
         pending->slot = index;
-        pending->revision = source->revision;
+        pending->revision = source->visual_revision;
         pending->quality = quality;
         lod->cursor = (index + 1) % count;
         return maage_status_make(MAAGE_STATUS_NOOP, 0, MAAGE_OPERATION_UPDATE, 0);
