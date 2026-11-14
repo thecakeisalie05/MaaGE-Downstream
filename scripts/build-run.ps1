@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $preset = 'windows-msvc-x64'
 $buildPreset = "windows-msvc-x64-$($Configuration.ToLowerInvariant())"
-$bin = Join-Path $root "build/cmake/windows-msvc-x64/bin/$Configuration"
+$bin = Join-Path $root "build/windows-msvc-x64/bin/$Configuration"
 $launcher = Join-Path $bin 'MaaGE Launcher.exe'
 
 function Invoke-CMake {
