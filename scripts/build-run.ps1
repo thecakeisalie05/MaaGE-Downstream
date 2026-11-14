@@ -13,6 +13,39 @@ $buildPreset = "windows-msvc-x64-$($Configuration.ToLowerInvariant())"
 $bin = Join-Path $root "build/windows-msvc-x64/bin/$Configuration"
 $launcher = Join-Path $bin 'MaaGE Launcher.exe'
 
+function Invoke-Git {
+    param([string[]]$Arguments)
+    & git @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Git failed (exit $LASTEXITCODE): git $($Arguments -join ' ')"
+    }
+}
+
+function Update-Source {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        throw 'Git must be installed and available on PATH to update MaaGE automatically.'
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $root '.git'))) {
+        throw "The source directory is not a Git checkout: $root"
+    }
+
+    $branch = (& git branch --show-current).Trim()
+    if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') {
+        throw "The Ctrl+B workflow requires the downstream main branch. Current branch: $branch"
+    }
+
+    $changes = @(& git status --porcelain --untracked-files=no)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not inspect local changes.' }
+    if ($changes.Count -gt 0) {
+        throw 'Tracked local source modifications detected. Commit, stash or revert them before Ctrl+B; nothing was overwritten.'
+    }
+
+    Write-Host 'Fetching the latest downstream main...'
+    Invoke-Git -Arguments @('fetch', 'origin', 'main')
+    Write-Host 'Fast-forwarding main (never rebasing or discarding local commits)...'
+    Invoke-Git -Arguments @('merge', '--ff-only', 'origin/main')
+}
+
 function Invoke-CMake {
     param([string[]]$Arguments)
     & cmake @Arguments
@@ -23,6 +56,7 @@ function Invoke-CMake {
 
 Push-Location $root
 try {
+    Update-Source
     if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
         throw 'CMake 3.21+ must be installed and available on PATH.'
     }
