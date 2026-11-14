@@ -457,9 +457,51 @@ maage_status maage_launcher_ui_refresh(maage_launcher_ui *ui) {
             if (!maage_status_failed(job_result) && operation == 2 && *ui->replacing_client)
                 maage_launcher_client_finish_replace(ui);
             else if (maage_status_failed(job_result) || operation == 3) ui->replacing_client[0] = 0;
+    if (ui->developer_launch_stage == 2 && operation == 1)
+        ui->developer_launch_stage = maage_status_failed(job_result) ? 0 : 3;
+    else if (ui->developer_launch_stage == 4 && operation == 2)
+        ui->developer_launch_stage = maage_status_failed(job_result) ? 0 : 5;
 #endif
         }
     }
+#if MAAGE_LAUNCHER_DEVELOPMENT
+    /* Use the same validated import path as the native Installations UI. */
+    if (ui->developer_launch_stage == 1 && ui->catalog_ready && ui->clients_valid && !ui->client_job && !ui->client_process) {
+        job_result = maage_launcher_client_probe(ui, ui->developer_client_path);
+        if (maage_status_failed(job_result)) ui->developer_launch_stage = 0;
+        else ui->developer_launch_stage = 2;
+    } else if (ui->developer_launch_stage == 3 && !ui->client_job) {
+        if (maage_clients_find(ui->clients, ui->client_candidate.build.id) >= 0) {
+            ui->developer_launch_stage = 5;
+        } else {
+            job_result = maage_launcher_client_import(ui);
+            if (maage_status_failed(job_result)) ui->developer_launch_stage = 0;
+            else ui->developer_launch_stage = 4;
+        }
+    } else if (ui->developer_launch_stage == 5 && !ui->client_job) {
+        int index = -1;
+        for (i = 0; i < ui->count; ++i)
+            if (ui->installations[i].id == ui->selected) { index = (int) i; break; }
+        if (index < 0 && ui->count) index = 0;
+        if (index < 0) {
+            job_result = maage_launcher_installation_write(ui, -1, "MaaGE Development", ui->client_candidate.build.id, "");
+            if (!maage_status_failed(job_result)) index = (int) ui->count - 1;
+        } else {
+            char name[96], arguments[MAAGE_INSTANCE_ARGUMENTS_CAPACITY];
+            strcpy(name, ui->installations[index].name);
+            strcpy(arguments, ui->installations[index].arguments);
+            job_result = maage_launcher_installation_write(ui, index, name, ui->client_candidate.build.id, arguments);
+        }
+        if (!maage_status_failed(job_result) && index >= 0)
+            job_result = maage_launcher_installation_select(ui, (unsigned) index);
+        if (maage_status_failed(job_result)) {
+            ui->developer_launch_stage = 0;
+            result = job_result;
+        } else {
+            ui->developer_launch_stage = 6;
+        }
+    }
+#endif
     if (ui->client_process) {
         process_result = maage_process_poll(ui->client_process, &exit_code, &process_state, ui->error, &ui->trace);
         if (maage_status_failed(process_result)) ui->result = result = process_result;
@@ -560,6 +602,27 @@ maage_status maage_launcher_ui_refresh(maage_launcher_ui *ui) {
         ui->readiness = "Ready to play";
         ui->can_play = 1;
     }
+#if MAAGE_LAUNCHER_DEVELOPMENT
+    if (ui->developer_launch_stage == 6 && ui->can_play) {
+        unsigned selected_index;
+        for (selected_index = 0; selected_index < ui->count; ++selected_index)
+            if (ui->installations[selected_index].id == ui->selected) break;
+        if (selected_index < ui->count) {
+            /* Play already requires account authorization and re-verifies resources. */
+            strcpy(ui->pending_client, ui->installations[selected_index].client);
+            strcpy(ui->pending_instance, ui->installations[selected_index].uuid);
+            strcpy(ui->pending_account, ui->account);
+            ui->resource_mode = MAAGE_ASSETS_PREPARE;
+            ui->resources_pending = 1;
+            ui->launch_pending = 1;
+            ui->can_play = 0;
+        }
+        ui->developer_launch_stage = 0;
+    } else if (ui->developer_launch_stage == 6 && ui->progress.stage == MAAGE_SETUP_FAILED && !ui->progress.busy) {
+        /* Keep failed preparation visible instead of endlessly retrying. */
+        ui->developer_launch_stage = 0;
+    }
+#endif
     if (ui->can_play && !ui->play_timed) {
         ui->play_timed = 1;
         MAAGE_LOG_DEBUG_EVENT("maage.launcher.startup", maage_log_debug("maage.launcher.startup", "Play first available: %.3f s since Launcher entry.", maage_time_monotonic_seconds() - ui->started_at));

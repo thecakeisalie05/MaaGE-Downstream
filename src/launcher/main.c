@@ -15,12 +15,21 @@ maage_status maage_application_main(int argc, char *const argv[]) {
     maage_status_trace trace;
     double started = maage_time_monotonic_seconds();
     int repair = 0, manage_accounts = 0, i;
+#if MAAGE_LAUNCHER_DEVELOPMENT
+    const char *development_client = NULL;
+#endif
     memset(&ui, 0, sizeof(ui));
     maage_status_trace_init(&trace);
     maage_log_info("maage.launcher", "MaaGE Launcher %s", MAAGE_LAUNCHER_VERSION);
     for (i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--repair-assets")) repair = 1;
         if (!strcmp(argv[i], "--manage-accounts")) manage_accounts = 1;
+#if MAAGE_LAUNCHER_DEVELOPMENT
+        if (!strcmp(argv[i], "--dev-launch-client")) {
+            if (i + 1 >= argc || !argv[i + 1][0] || strlen(argv[i + 1]) >= MAAGE_PATH_CAPACITY) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_LAUNCHER, MAAGE_OPERATION_PARSE, 0);
+            development_client = argv[++i];
+        }
+#endif
         /* This explicit graphics diagnostic uses no account or Minecraft data. */
         if (!strcmp(argv[i], "--renderer-demo")) return maage_launcher_demonstration(argc, argv);
     }
@@ -34,6 +43,12 @@ maage_status maage_application_main(int argc, char *const argv[]) {
         goto finished;
     }
     ui.started_at = started;
+#if MAAGE_LAUNCHER_DEVELOPMENT
+    if (development_client) {
+        strcpy(ui.developer_client_path, development_client);
+        ui.developer_launch_stage = 1;
+    }
+#endif
     if (manage_accounts) ui.page = MAAGE_PAGE_ACCOUNTS;
     if (repair) {
         ui.resource_mode = MAAGE_ASSETS_REPAIR;
