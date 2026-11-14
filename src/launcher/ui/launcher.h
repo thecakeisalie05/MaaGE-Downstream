@@ -49,6 +49,10 @@ typedef struct maage_launcher_ui {
     unsigned client_revision;
     int client_operation, client_confirmation, clients_valid;
     char client_status[512];
+#if MAAGE_LAUNCHER_DEVELOPMENT
+    char developer_client_path[MAAGE_PATH_CAPACITY];
+    int developer_launch_stage; /* 1 probe, 2 await, 3 import, 4 await, 5 assign, 6 play, 0 done */
+#endif
 } maage_launcher_ui;
 maage_status maage_launcher_ui_init(maage_launcher_ui *ui, maage_access *access, maage_assets *assets);
 /* Native adapters call after first presentation. Only this schedules startup I/O. */
