@@ -1,5 +1,4 @@
-# Ctrl+B: build MaaGE's Windows Client and Launcher, then launch the
-# selected installation through MaaGE's validated development import flow.
+# Ctrl+B: safely update main, build Launcher/Client, run Client, archive diagnostics.
 [CmdletBinding()]
 param(
     [ValidateSet('Debug', 'Release')]
@@ -13,272 +12,136 @@ $buildPreset = "windows-msvc-x64-$($Configuration.ToLowerInvariant())"
 $bin = Join-Path $root "build/windows-msvc-x64/bin/$Configuration"
 $launcher = Join-Path $bin 'MaaGE Launcher.exe'
 
-function Invoke-Git {
-    param([string[]]$Arguments)
-    & git @Arguments
+function Invoke-CheckedCommand {
+    param([string]$Name, [string[]]$Arguments)
+    & $Name @Arguments
     if ($LASTEXITCODE -ne 0) {
-        throw "Git failed (exit $LASTEXITCODE): git $($Arguments -join ' ')"
+        throw "$Name failed (exit $LASTEXITCODE): $($Arguments -join ' ')"
     }
 }
 
 function Update-Source {
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        throw 'Git must be installed and available on PATH to update MaaGE automatically.'
+        throw 'Git is required for the automatic source update.'
     }
     if (-not (Test-Path -LiteralPath (Join-Path $root '.git'))) {
-        throw "The source directory is not a Git checkout: $root"
+        throw "Not a Git checkout: $root"
     }
-
     $branch = (& git branch --show-current).Trim()
     if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') {
-        throw "The Ctrl+B workflow requires the downstream main branch. Current branch: $branch"
+        throw "Switch the source checkout to main before Ctrl+B (current: $branch)."
     }
-
     $changes = @(& git status --porcelain --untracked-files=no)
-    if ($LASTEXITCODE -ne 0) { throw 'Could not inspect local changes.' }
+    if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the local Git checkout.' }
     if ($changes.Count -gt 0) {
-        throw 'Tracked local source modifications detected. Commit, stash or revert them before Ctrl+B; nothing was overwritten.'
+        throw 'Tracked local edits exist. Commit, stash, or revert them before Ctrl+B; no files were overwritten.'
     }
-
-    Write-Host 'Fetching the latest downstream main...'
-    Invoke-Git -Arguments @('fetch', 'origin', 'main')
-    Write-Host 'Fast-forwarding main (never rebasing or discarding local commits)...'
-    Invoke-Git -Arguments @('merge', '--ff-only', 'origin/main')
+    Write-Host 'Fetching downstream main...'
+    Invoke-CheckedCommand -Name 'git' -Arguments @('fetch', 'origin', 'main')
+    Write-Host 'Fast-forwarding local main...'
+    Invoke-CheckedCommand -Name 'git' -Arguments @('merge', '--ff-only', 'origin/main')
 }
 
-
-function Get-MaaGEClientProcess {
-    param([datetime]$StartedAfter)
-    $candidates = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'maage-client.exe'" -ErrorAction Stop)
-    foreach ($process in $candidates) {
-        if (-not $process.CommandLine -or $process.CommandLine -notmatch '(?i)--instance=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})') { continue }
-        if ([datetime]$process.CreationDate -lt $StartedAfter.AddSeconds(-2)) { continue }
-        return $process
+function Get-ClientDetails {
+    param([datetime]$StartedAt)
+    # A Client is spawned by Launcher, not directly by this PowerShell task.
+    $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'maage-client.exe'" -ErrorAction Stop)
+    foreach ($entry in $processes) {
+        if (-not $entry.CommandLine) { continue }
+        if ([datetime]$entry.CreationDate -lt $StartedAt.AddSeconds(-2)) { continue }
+        $idMatch = [regex]::Match($entry.CommandLine, '(?i)--instance=([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})')
+        $rootMatch = [regex]::Match($entry.CommandLine, '(?i)(?:"--data-directory=([^"]+)"|--data-directory="([^"]+)"|--data-directory=(\S+))')
+        if (-not $idMatch.Success -or -not $rootMatch.Success) { continue }
+        $dataRoot = @($rootMatch.Groups[1].Value, $rootMatch.Groups[2].Value, $rootMatch.Groups[3].Value) |
+            Where-Object { $_ } | Select-Object -First 1
+        if (-not $dataRoot) { continue }
+        return @{
+            ProcessId = [int]$entry.ProcessId
+            InstanceId = $idMatch.Groups[1].Value
+            DataRoot = [System.IO.Path]::GetFullPath($dataRoot)
+        }
     }
     return $null
 }
 
-function Get-MaaGEClientIdentity {
-    param($Process)
-    $line = [string]$Process.CommandLine
-    $instance = [regex]::Match($line, '(?i)--instance=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})')
-    $root = [regex]::Match($line, '(?i)(?:^|\s)(?:"--data-directory=([^"]+)"|--data-directory=("[^"]+"|\S+))')
-    if (-not $instance.Success -or -not $root.Success) {
-        throw 'Could not identify the launched MaaGE instance and data root from the Client process arguments.'
-    }
-    $dataPath = if ($root.Groups[1].Success) { $root.Groups[1].Value } else { $root.Groups[2].Value.Trim('"') }
-    $dataPath = [System.IO.Path]::GetFullPath($dataPath)
-    return @{
-        Instance = $instance.Groups[1].Value
-        DataRoot = $dataPath
-    }
-}
-
-function Export-MaaGEProfile {
+function Export-SessionDiagnostics {
     param(
-        [hashtable]$Identity,
+        [hashtable]$Client,
         [datetime]$StartedAt,
         [datetime]$FinishedAt,
         [string]$Revision,
         [string]$Configuration
     )
-    $logs = Join-Path (Join-Path (Join-Path $Identity.DataRoot 'instances') $Identity.Instance) 'logs'
-    if (-not (Test-Path -LiteralPath $logs -PathType Container)) {
-        Write-Warning "No instance logs folder found: $logs"
-        return
-    }
-
-    $out = Join-Path (Split-Path $root -Parent) 'profile-reports'
-    New-Item -ItemType Directory -Path $out -Force | Out-Null
+    $instanceLogs = Join-Path (Join-Path (Join-Path $Client.DataRoot 'instances') $Client.InstanceId) 'logs'
+    $reportDir = Join-Path (Split-Path $root -Parent) 'profile-reports'
+    New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
     $stamp = $StartedAt.ToUniversalTime().ToString('yyyyMMdd-HHmmss')
-    $name = "MaaGE-profile-$stamp-$($Identity.Instance.Substring(0, 8))"
-    $archive = Join-Path $out "$name.zip"
-    $staging = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $staging -Force | Out-Null
+    $archivePath = Join-Path $reportDir ("MaaGE-profile-{0}-{1}.zip" -f $stamp, $Client.InstanceId.Substring(0, 8))
+    if (Test-Path -LiteralPath $archivePath) {
+        $archivePath = Join-Path $reportDir ("MaaGE-profile-{0}-{1}-{2}.zip" -f $stamp, $Client.InstanceId.Substring(0, 8), [guid]::NewGuid().ToString('N').Substring(0, 8))
+    }
+    $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ('maage-diagnostics-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
     try {
-        $instanceFolder = Join-Path $staging 'instance-logs'
-        New-Item -ItemType Directory -Path $instanceFolder | Out-Null
-        $files = @(Get-ChildItem -LiteralPath $logs -File -ErrorAction Stop |
-            Where-Object {
-                $_.LastWriteTime -ge $StartedAt.AddSeconds(-5) -and (
-                    $_.Name -eq 'client.log' -or
-                    $_.Name -match '^profile-[0-9]+-[0-9]+\.csv
-    param([string[]]$Arguments)
-    & cmake @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "CMake failed (exit $LASTEXITCODE): $($Arguments -join ' ')"
-    }
-}
-
-Push-Location $root
-try {
-    Update-Source
-    if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
-        throw 'CMake 3.21+ must be installed and available on PATH.'
-    }
-    $cache = Join-Path $root 'cmake/windows-msvc-x64/CMakeCache.txt'
-    if (-not (Test-Path -LiteralPath $cache -PathType Leaf)) {
-        Write-Host 'Configuring the Windows x64 development build...'
-        Invoke-CMake -Arguments @('--preset', $preset)
-    }
-    Write-Host "Building the MaaGE Launcher and Client ($Configuration)..."
-    Invoke-CMake -Arguments @('--build', '--preset', $buildPreset, '--target', 'maage_launcher', 'maage_client_manifest')
-    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
-        throw "Built Launcher not found: $launcher"
-    }
-
-    $packages = @(Get-ChildItem -LiteralPath $bin -Directory |
-        Where-Object { $_.Name -like 'MaaGE-Client-*-Windows-*' } |
-        Where-Object {
-            (Test-Path -LiteralPath (Join-Path $_.FullName 'maage-client.exe') -PathType Leaf) -and
-            (Test-Path -LiteralPath (Join-Path $_.FullName 'maage-client.json') -PathType Leaf)
-        })
-    if ($packages.Count -eq 0) { throw "No complete Client package found beneath $bin" }
-    $package = $packages |
-        Sort-Object { (Get-Item -LiteralPath (Join-Path $_.FullName 'maage-client.json')).LastWriteTimeUtc } -Descending |
-        Select-Object -First 1
-    $client = Join-Path $package.FullName 'maage-client.exe'
-    Write-Host "Starting MaaGE Launcher with Client package: $client"
-    $env:MAAGE_PROFILE = '1'
-    $revision = (& git rev-parse --short HEAD).Trim()
-    if ($LASTEXITCODE -ne 0) { $revision = 'unknown' }
-    $startedAt = Get-Date
-    $launcherProcess = Start-Process -FilePath $launcher -ArgumentList @('--dev-launch-client', ('"' + $client + '"')) -WorkingDirectory (Split-Path $launcher -Parent) -PassThru
-    Watch-MaaGEClient -LauncherProcess $launcherProcess -StartedAt $startedAt -Revision $revision -Configuration $Configuration
-}
-finally {
-    Pop-Location
-}
- -or
-                    $_.Name -match '^client.*\.log(\.gz)?
-    param([string[]]$Arguments)
-    & cmake @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "CMake failed (exit $LASTEXITCODE): $($Arguments -join ' ')"
-    }
-}
-
-Push-Location $root
-try {
-    Update-Source
-    if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
-        throw 'CMake 3.21+ must be installed and available on PATH.'
-    }
-    $cache = Join-Path $root 'cmake/windows-msvc-x64/CMakeCache.txt'
-    if (-not (Test-Path -LiteralPath $cache -PathType Leaf)) {
-        Write-Host 'Configuring the Windows x64 development build...'
-        Invoke-CMake -Arguments @('--preset', $preset)
-    }
-    Write-Host "Building the MaaGE Launcher and Client ($Configuration)..."
-    Invoke-CMake -Arguments @('--build', '--preset', $buildPreset, '--target', 'maage_launcher', 'maage_client_manifest')
-    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
-        throw "Built Launcher not found: $launcher"
-    }
-
-    $packages = @(Get-ChildItem -LiteralPath $bin -Directory |
-        Where-Object { $_.Name -like 'MaaGE-Client-*-Windows-*' } |
-        Where-Object {
-            (Test-Path -LiteralPath (Join-Path $_.FullName 'maage-client.exe') -PathType Leaf) -and
-            (Test-Path -LiteralPath (Join-Path $_.FullName 'maage-client.json') -PathType Leaf)
-        })
-    if ($packages.Count -eq 0) { throw "No complete Client package found beneath $bin" }
-    $package = $packages |
-        Sort-Object { (Get-Item -LiteralPath (Join-Path $_.FullName 'maage-client.json')).LastWriteTimeUtc } -Descending |
-        Select-Object -First 1
-    $client = Join-Path $package.FullName 'maage-client.exe'
-    Write-Host "Starting MaaGE Launcher with Client package: $client"
-    $env:MAAGE_PROFILE = '1'
-    Start-Process -FilePath $launcher -ArgumentList @('--dev-launch-client', ('"' + $client + '"')) -WorkingDirectory (Split-Path $launcher -Parent)
-}
-finally {
-    Pop-Location
-}
-
-                )
-            })
-        foreach ($file in $files) {
-            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $instanceFolder $file.Name) -ErrorAction Stop
+        $copyDir = Join-Path $tempDir 'instance-logs'
+        New-Item -ItemType Directory -Path $copyDir | Out-Null
+        $included = @()
+        if (Test-Path -LiteralPath $instanceLogs -PathType Container) {
+            $included = @(Get-ChildItem -LiteralPath $instanceLogs -File -ErrorAction Stop |
+                Where-Object {
+                    $_.LastWriteTime -ge $StartedAt.AddSeconds(-5) -and
+                    ($_.Name -eq 'client.log' -or
+                     $_.Name -match '^profile-[0-9]+-[0-9]+\.csv$' -or
+                     $_.Name -match '^client.*\.log(?:\.gz)?$')
+                })
+            foreach ($file in $included) {
+                Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $copyDir $file.Name) -ErrorAction Stop
+            }
+        } else {
+            Write-Warning "Instance logs folder not found: $instanceLogs"
         }
-        $manifest = [ordered]@{
-            description = 'MaaGE development run diagnostics'
+        [ordered]@{
             started_utc = $StartedAt.ToUniversalTime().ToString('o')
             ended_utc = $FinishedAt.ToUniversalTime().ToString('o')
             git_revision = $Revision
             build_configuration = $Configuration
-            instance_id = $Identity.Instance
-            logs_included = @($files | ForEach-Object { $_.Name })
-            notes = 'Profiler timing is CPU wall time, not GPU execution time. Review logs for account identifiers before sharing.'
-        }
-        $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $staging 'run.json') -Encoding UTF8
-        if (Test-Path -LiteralPath $archive) {
-            $archive = Join-Path $out "$name-$([guid]::NewGuid().ToString('N').Substring(0, 8)).zip"
-        }
-        Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $archive -CompressionLevel Optimal -ErrorAction Stop
-        Write-Host ''
-        Write-Host "MaaGE diagnostic archive: $archive" -ForegroundColor Green
-        Write-Host "Included $($files.Count) session log/profile file(s)."
-        if ($files.Count -eq 0) { Write-Warning 'No current-session logs or CSV files were found. Archive contains only run.json.' }
-        Write-Host 'Review the archive for private information before uploading it.'
+            instance_id = $Client.InstanceId
+            files = @($included | ForEach-Object { $_.Name })
+            note = 'Client profiler captures CPU wall timing, not GPU execution. Logs may contain private details.'
+        } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $tempDir 'run.json') -Encoding UTF8
+        Compress-Archive -Path (Join-Path $tempDir '*') -DestinationPath $archivePath -CompressionLevel Optimal -ErrorAction Stop
+        Write-Host "Diagnostic ZIP: $archivePath" -ForegroundColor Green
+        Write-Host "Captured $($included.Count) log/profile file(s). Review contents before sharing."
     }
     finally {
-        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
-function Watch-MaaGEClient {
+function Wait-And-Archive {
     param(
         [System.Diagnostics.Process]$LauncherProcess,
         [datetime]$StartedAt,
-        [string]$Revision,
-        [string]$Configuration
+        [string]$Revision
     )
-    Write-Host 'Waiting for MaaGE Client to start; diagnostic ZIP will be produced when it exits.'
-    $clientProcess = $null
-    $identity = $null
-    $warnedCim = $false
-    while ($true) {
-        try {
-            $clientProcess = Get-MaaGEClientProcess -StartedAfter $StartedAt
-        }
-        catch {
-            if (-not $warnedCim) {
-                Write-Warning "Cannot inspect Client processes: $_"
-                $warnedCim = $true
-            }
-            break
-        }
-        if ($clientProcess) {
-            $identity = Get-MaaGEClientIdentity -Process $clientProcess
-            Write-Host "MaaGE Client detected (PID $($clientProcess.ProcessId), instance $($identity.Instance))."
-            break
-        }
+    Write-Host 'Waiting for MaaGE Client startup and exit to package diagnostic output...'
+    $client = $null
+    while (-not $client) {
+        $client = Get-ClientDetails -StartedAt $StartedAt
+        if ($client) { break }
         $LauncherProcess.Refresh()
         if ($LauncherProcess.HasExited) {
-            Write-Warning 'Launcher exited before a MaaGE Client was detected. No game profile archive was created.'
+            Write-Warning 'Launcher exited without a detected Client. No game profile was captured.'
             return
         }
         Start-Sleep -Seconds 1
     }
-    if (-not $identity) {
-        Write-Warning 'Could not identify the game process; no automatic archive was produced.'
-        return
-    }
-    while ($true) {
+    Write-Host "Tracking Client PID $($client.ProcessId) for instance $($client.InstanceId)."
+    while (Get-Process -Id $client.ProcessId -ErrorAction SilentlyContinue) {
         Start-Sleep -Seconds 1
-        $running = Get-Process -Id $clientProcess.ProcessId -ErrorAction SilentlyContinue
-        if (-not $running) { break }
-        if ($running.StartTime -and $running.StartTime -gt $StartedAt.AddYears(1)) { break }
     }
-    Start-Sleep -Milliseconds 600
-    Export-MaaGEProfile -Identity $identity -StartedAt $StartedAt -FinishedAt (Get-Date) -Revision $Revision -Configuration $Configuration
-}
-
-function Invoke-CMake {
-    param([string[]]$Arguments)
-    & cmake @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "CMake failed (exit $LASTEXITCODE): $($Arguments -join ' ')"
-    }
+    Start-Sleep -Milliseconds 500
+    Export-SessionDiagnostics -Client $client -StartedAt $StartedAt -FinishedAt (Get-Date) -Revision $Revision -Configuration $Configuration
 }
 
 Push-Location $root
@@ -289,11 +152,12 @@ try {
     }
     $cache = Join-Path $root 'cmake/windows-msvc-x64/CMakeCache.txt'
     if (-not (Test-Path -LiteralPath $cache -PathType Leaf)) {
-        Write-Host 'Configuring the Windows x64 development build...'
-        Invoke-CMake -Arguments @('--preset', $preset)
+        Write-Host "Configuring MaaGE ($preset)..."
+        Invoke-CheckedCommand -Name 'cmake' -Arguments @('--preset', $preset)
     }
-    Write-Host "Building the MaaGE Launcher and Client ($Configuration)..."
-    Invoke-CMake -Arguments @('--build', '--preset', $buildPreset, '--target', 'maage_launcher', 'maage_client_manifest')
+
+    Write-Host "Building MaaGE Launcher and Client ($Configuration)..."
+    Invoke-CheckedCommand -Name 'cmake' -Arguments @('--build', '--preset', $buildPreset, '--target', 'maage_launcher', 'maage_client_manifest')
     if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
         throw "Built Launcher not found: $launcher"
     }
@@ -304,14 +168,19 @@ try {
             (Test-Path -LiteralPath (Join-Path $_.FullName 'maage-client.exe') -PathType Leaf) -and
             (Test-Path -LiteralPath (Join-Path $_.FullName 'maage-client.json') -PathType Leaf)
         })
-    if ($packages.Count -eq 0) { throw "No complete Client package found beneath $bin" }
+    if ($packages.Count -eq 0) { throw "No complete Client package found under $bin." }
     $package = $packages |
         Sort-Object { (Get-Item -LiteralPath (Join-Path $_.FullName 'maage-client.json')).LastWriteTimeUtc } -Descending |
         Select-Object -First 1
-    $client = Join-Path $package.FullName 'maage-client.exe'
-    Write-Host "Starting MaaGE Launcher with Client package: $client"
+    $clientExecutable = Join-Path $package.FullName 'maage-client.exe'
+    Write-Host "Launching MaaGE with Client package: $clientExecutable"
+
     $env:MAAGE_PROFILE = '1'
-    Start-Process -FilePath $launcher -ArgumentList @('--dev-launch-client', ('"' + $client + '"')) -WorkingDirectory (Split-Path $launcher -Parent)
+    $revision = (& git rev-parse --short HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { $revision = 'unknown' }
+    $startedAt = Get-Date
+    $launcherProcess = Start-Process -FilePath $launcher -ArgumentList @('--dev-launch-client', ('"' + $clientExecutable + '"')) -WorkingDirectory (Split-Path $launcher -Parent) -PassThru
+    Wait-And-Archive -LauncherProcess $launcherProcess -StartedAt $startedAt -Revision $revision
 }
 finally {
     Pop-Location
