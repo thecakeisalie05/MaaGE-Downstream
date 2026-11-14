@@ -873,22 +873,33 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     render_config.window = window;
     render_config.required_features |= MAAGE_RENDER_CAP_TEXTURED_MESH | MAAGE_RENDER_CAP_UI | MAAGE_RENDER_CAP_SCENE;
 #ifdef _WIN32
-    /* Prefer Vulkan for automatic Windows selection. Explicit --renderer
-     * options remain authoritative; unsupported Vulkan falls back to AUTO. */
-    if (render_config.family == MAAGE_RENDER_FAMILY_AUTO) {
-        maage_status vulkan_result;
-        render_config.family = MAAGE_RENDER_FAMILY_VULKAN;
-        vulkan_result = maage_renderer_create(&render_config, &renderer, trace);
-        if (maage_status_failed(vulkan_result)) {
-            maage_log_trace_status(MAAGE_LOG_WARNING, "maage.client.render", vulkan_result, trace, "Vulkan-first initialization failed. Backend compiled=%d; falling back to automatic renderer selection.", maage_render_backend_compiled(MAAGE_RENDER_VULKAN));
-            maage_status_trace_init(trace);
-            render_config.family = MAAGE_RENDER_FAMILY_AUTO;
-            rendered = maage_renderer_create(&render_config, &renderer, trace);
+    /* Ctrl+B requests Vulkan first even if a saved installation explicitly
+     * selects OpenGL. On failure restore that exact family as fallback.
+     * Normal Client invocations still honor explicit --renderer selection. */
+    {
+        const char *prefer = getenv("MAAGE_PREFER_VULKAN");
+        maage_render_family requested = render_config.family;
+        int force_preference = prefer && !strcmp(prefer, "1");
+        if (force_preference || requested == MAAGE_RENDER_FAMILY_AUTO) {
+            maage_status vulkan_result;
+            render_config.family = MAAGE_RENDER_FAMILY_VULKAN;
+            maage_log_info("maage.client.render", "Attempting Vulkan first; saved/CLI family=%d; dev_override=%d; compiled=%d.",
+                (int) requested, force_preference, maage_render_backend_compiled(MAAGE_RENDER_VULKAN));
+            vulkan_result = maage_renderer_create(&render_config, &renderer, trace);
+            if (maage_status_failed(vulkan_result)) {
+                maage_log_trace_status(MAAGE_LOG_WARNING, "maage.client.render", vulkan_result, trace,
+                    "Vulkan initialization failed; restoring renderer family %d.", (int) requested);
+                maage_status_trace_init(trace);
+                render_config.family = requested == MAAGE_RENDER_FAMILY_VULKAN ? MAAGE_RENDER_FAMILY_AUTO : requested;
+                rendered = maage_renderer_create(&render_config, &renderer, trace);
+            } else
+                rendered = vulkan_result;
         } else
-            rendered = vulkan_result;
-    } else
+            rendered = maage_renderer_create(&render_config, &renderer, trace);
+    }
+#else
+    rendered = maage_renderer_create(&render_config, &renderer, trace);
 #endif
-        rendered = maage_renderer_create(&render_config, &renderer, trace);
     if (maage_status_failed(rendered)) goto done;
     maage_log_info("maage.client.render", "Selected renderer: %s.", maage_render_backend_name(maage_renderer_get_backend(renderer)));
     operation = maage_client_splash_begin(&splash, system, window, renderer, directory, video_options.gui_scale, trace);
