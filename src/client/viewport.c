@@ -874,7 +874,7 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
         render_config.family = MAAGE_RENDER_FAMILY_VULKAN;
         vulkan_result = maage_renderer_create(&render_config, &renderer, trace);
         if (maage_status_failed(vulkan_result)) {
-            maage_log_info("maage.client.render", "Vulkan unavailable; falling back to automatic renderer selection.");
+            maage_log_trace_status(MAAGE_LOG_WARNING, "maage.client.render", vulkan_result, trace, "Vulkan-first initialization failed. Backend compiled=%d; falling back to automatic renderer selection.", maage_render_backend_compiled(MAAGE_RENDER_VULKAN));
             maage_status_trace_init(trace);
             render_config.family = MAAGE_RENDER_FAMILY_AUTO;
             rendered = maage_renderer_create(&render_config, &renderer, trace);
