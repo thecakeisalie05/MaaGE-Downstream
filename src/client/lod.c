@@ -11,101 +11,197 @@
 static int lod_distance(int a, int b) {
     return a < b ? b : a;
 }
-static int lod_height(maage_world *world, int x, int z, int fallback) {
-    maage_world_observation sample;
-    if (!maage_world_observe(world, x, 0, z, &sample)) return fallback;
-    return sample.precipitation_height;
+/* LOD is deliberately block-aligned. The precipitation heightmap includes
+ * leaves and structures; using it directly as elevation produces giant smooth
+ * triangular canopies. Scan for the biome's registered ground state instead.
+ * All observations are read-only from the already-resident replica. */
+typedef struct maage_lod_surface {
+    int ground, water, present;
+    const maage_block_state_definition *ground_state, *water_state;
+    const maage_biome_definition *biome;
+} maage_lod_surface;
+
+static maage_lod_surface lod_sample(const maage_world *world, const maage_block_registry *registry,
+    const maage_biome_registry *biomes, int x, int z) {
+    maage_lod_surface surface;
+    maage_world_observation observation;
+    const maage_block_state_definition *state, *fallback_state = NULL;
+    const maage_block_definition *block;
+    int y, top, fallback_height = 0;
+    memset(&surface, 0, sizeof(surface));
+    if (!maage_world_observe(world, x, 0, z, &observation)) return surface;
+    surface.present = 1;
+    surface.biome = biomes ? maage_biome_registry_get(biomes, observation.biome_id) : NULL;
+    top = observation.precipitation_height;
+    if (top > MAAGE_WORLD_HEIGHT) top = MAAGE_WORLD_HEIGHT;
+    /* A fluid surface may sit above terrain, including ocean floor. */
+    for (y = top - 1; y >= 0; --y) {
+        state = maage_block_registry_state(registry, maage_world_get(world, x, y, z));
+        if (!state) continue;
+        block = maage_block_registry_block(registry, state->block_id);
+        if (!block) continue;
+        if (state->fluid_kind) {
+            if (!surface.water_state) {
+                surface.water_state = state;
+                surface.water = y + 1;
+            }
+            continue;
+        }
+        if (!block->solid || block->foliage || block->mesh_shape != MAAGE_BLOCK_MESH_CUBE) continue;
+        if (!fallback_state) {
+            fallback_state = state;
+            fallback_height = y + 1;
+        }
+        if (surface.biome && (state->id == surface.biome->surface || state->id == surface.biome->filler)) {
+            surface.ground_state = state;
+            surface.ground = y + 1;
+            break;
+        }
+    }
+    if (!surface.ground_state) {
+        surface.ground_state = fallback_state;
+        surface.ground = fallback_height;
+    }
+    if (surface.water <= surface.ground) {
+        surface.water_state = NULL;
+        surface.water = 0;
+    }
+    return surface;
 }
-/* One top quad per 1x1, 2x2 or 4x4 terrain patch. Adjacent surface
- * heights are sampled from the same integer coordinates within each column.
- * This retains a bounded coarse silhouette, not precise decorations/caves. */
+
+static void lod_write_face(maage_mesh_vertex *vertices, unsigned int *indices, size_t *faces,
+    const maage_block_state_definition *state, const maage_biome_definition *biome,
+    unsigned int face, float x0, float z0, float x1, float z1, float bottom, float top, int fluid) {
+    static const unsigned int triangles[6] = {0U, 1U, 2U, 0U, 2U, 3U};
+    const maage_block_face_definition *definition = &state->faces[face];
+    const float *uv = definition->uv;
+    unsigned int k, component;
+    float point[4][3], u, v, tint, shade;
+    size_t offset = *faces * 4U;
+    size_t elements = *faces * 6U;
+    if (face == MAAGE_FACE_POSITIVE_Y) {
+        point[0][0] = x0; point[0][1] = top; point[0][2] = z1;
+        point[1][0] = x1; point[1][1] = top; point[1][2] = z1;
+        point[2][0] = x1; point[2][1] = top; point[2][2] = z0;
+        point[3][0] = x0; point[3][1] = top; point[3][2] = z0;
+    } else if (face == MAAGE_FACE_NEGATIVE_X) {
+        point[0][0] = x0; point[0][1] = bottom; point[0][2] = z0;
+        point[1][0] = x0; point[1][1] = bottom; point[1][2] = z1;
+        point[2][0] = x0; point[2][1] = top; point[2][2] = z1;
+        point[3][0] = x0; point[3][1] = top; point[3][2] = z0;
+    } else if (face == MAAGE_FACE_POSITIVE_X) {
+        point[0][0] = x1; point[0][1] = bottom; point[0][2] = z1;
+        point[1][0] = x1; point[1][1] = bottom; point[1][2] = z0;
+        point[2][0] = x1; point[2][1] = top; point[2][2] = z0;
+        point[3][0] = x1; point[3][1] = top; point[3][2] = z1;
+    } else if (face == MAAGE_FACE_NEGATIVE_Z) {
+        point[0][0] = x1; point[0][1] = bottom; point[0][2] = z0;
+        point[1][0] = x0; point[1][1] = bottom; point[1][2] = z0;
+        point[2][0] = x0; point[2][1] = top; point[2][2] = z0;
+        point[3][0] = x1; point[3][1] = top; point[3][2] = z0;
+    } else {
+        point[0][0] = x0; point[0][1] = bottom; point[0][2] = z1;
+        point[1][0] = x1; point[1][1] = bottom; point[1][2] = z1;
+        point[2][0] = x1; point[2][1] = top; point[2][2] = z1;
+        point[3][0] = x0; point[3][1] = top; point[3][2] = z1;
+    }
+    shade = face == MAAGE_FACE_POSITIVE_Y ? 1.0f : (face == MAAGE_FACE_NEGATIVE_X || face == MAAGE_FACE_POSITIVE_X ? 0.6f : 0.8f);
+    for (k = 0; k < 4U; ++k) {
+        maage_mesh_vertex *vertex = &vertices[offset + k];
+        u = (k == 1U || k == 2U) ? 1.0f : 0.0f;
+        v = k < 2U ? 1.0f : 0.0f;
+        vertex->position[0] = point[k][0];
+        vertex->position[1] = point[k][1];
+        vertex->position[2] = point[k][2];
+        /* Absolute atlas UVs with a zero tile span. The shader's tiled mode
+         * wraps UV=1 to zero and reduces the whole face to a single texel. */
+        vertex->uv[0] = uv[0] + u * (uv[2] - uv[0]);
+        vertex->uv[1] = uv[1] + v * (uv[3] - uv[1]);
+        for (component = 0; component < 3U; ++component) {
+            tint = definition->tint[component];
+            if (biome && (definition->tint_mode == MAAGE_BLOCK_TINT_GRASS ||
+                definition->tint_mode == MAAGE_BLOCK_TINT_GRASS_LOCAL))
+                tint *= biome->grass_color[component];
+            else if (biome && definition->tint_mode == MAAGE_BLOCK_TINT_FOLIAGE)
+                tint *= biome->foliage_color[component];
+            vertex->color[component] = tint * shade;
+            vertex->animation[component] = definition->animation[component];
+        }
+        vertex->color[3] = fluid ? definition->tint[3] : 1.0f;
+        vertex->light[0] = 1.0f;
+        vertex->light[1] = 0.0f;
+        vertex->material = fluid ? MAAGE_MESH_MATERIAL_TRANSLUCENT : MAAGE_MESH_MATERIAL_OPAQUE;
+    }
+    for (k = 0; k < 6U; ++k) indices[elements + k] = (unsigned int) offset + triangles[k];
+    ++*faces;
+}
+
+/* One flat top, exposed step faces, and a separate water plane per patch.
+ * Geometric capacity is bounded at six quads/patch. No sloped triangles or
+ * canopy heights; the original near meshes stay authoritative for appearance. */
 static maage_status lod_build(maage_world *world, const maage_biome_registry *biomes, int cx, int cz, int quality,
     maage_mesh_vertex **vertices, unsigned int **indices, maage_mesh_data *data) {
     const maage_block_registry *registry = maage_world_registry(world);
-    const maage_block_state_definition *state;
-    const maage_block_face_definition *face;
-    const maage_biome_definition *biome;
-    maage_world_observation observation;
+    maage_lod_surface samples[18][18], *center, *neighbor;
     maage_mesh_vertex *v;
-    unsigned int *ix;
-    unsigned int step = quality == 0 ? 1U : quality == 1 ? 2U : 4U;
-    unsigned int count = 16U / step, i, j, k, base, ix_base;
-    int wx, wz, h[4];
-    float x[4], z[4], uv[4], color[3];
-    size_t quads = (size_t) count * count;
-    if (!vertices || !indices || !data || !world || !registry) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_CREATE, 0);
+    unsigned int *ix, step, patches, x, z, side;
+    int wx, wz, neighbor_heights[4];
+    float x0, x1, z0, z1;
+    size_t count = 0, capacity;
+    static const int dx[4] = {-1, 1, 0, 0}, dz[4] = {0, 0, -1, 1};
+    static const unsigned int faces[4] = {
+        MAAGE_FACE_NEGATIVE_X, MAAGE_FACE_POSITIVE_X, MAAGE_FACE_NEGATIVE_Z, MAAGE_FACE_POSITIVE_Z
+    };
+    if (!world || !registry || !vertices || !indices || !data || quality < 0 || quality > 2)
+        return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_CREATE, 0);
     *vertices = NULL;
     *indices = NULL;
     memset(data, 0, sizeof(*data));
-    v = (maage_mesh_vertex *) calloc(quads * 4U, sizeof(*v));
-    ix = (unsigned int *) malloc(quads * 6U * sizeof(*ix));
+    step = quality == 0 ? 1U : (quality == 1 ? 2U : 4U);
+    patches = 16U / step;
+    capacity = (size_t) patches * patches * 6U;
+    v = (maage_mesh_vertex *) calloc(capacity * 4U, sizeof(*v));
+    ix = (unsigned int *) malloc(capacity * 6U * sizeof(*ix));
     if (!v || !ix) {
         free(v);
         free(ix);
         return maage_status_make(MAAGE_STATUS_ALLOCATION_FAILED, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_CREATE, 0);
     }
-    for (j = 0; j < count; ++j) for (i = 0; i < count; ++i) {
-        wx = cx * 16 + (int) (i * step);
-        wz = cz * 16 + (int) (j * step);
-        h[0] = lod_height(world, wx, wz + (int) step, 64);
-        h[1] = lod_height(world, wx + (int) step, wz + (int) step, h[0]);
-        h[2] = lod_height(world, wx + (int) step, wz, h[1]);
-        h[3] = lod_height(world, wx, wz, h[0]);
-        biome = NULL;
-        if (biomes && maage_world_observe(world, wx, 0, wz, &observation))
-            biome = maage_biome_registry_get(biomes, observation.biome_id);
-        /* Match the registered biome's terrain surface instead of taking
-         * leaves/logs/stone from the highest non-air block of a tree canopy.
-         * Numeric surface IDs use the same immutable presentation registry. */
-        state = maage_block_registry_state(registry, biome ? biome->surface :
-            maage_world_get(world, wx, h[3] > 0 ? h[3] - 1 : 0, wz));
-        face = state ? &state->faces[MAAGE_FACE_POSITIVE_Y] : NULL;
-        for (k = 0; k < 4; ++k) uv[k] = face ? face->uv[k] : 0;
-        for (k = 0; k < 3; ++k) {
-            color[k] = face ? face->tint[k] : 1.0f;
-            if (biome && face && (face->tint_mode == MAAGE_BLOCK_TINT_GRASS ||
-                face->tint_mode == MAAGE_BLOCK_TINT_GRASS_LOCAL))
-                color[k] *= biome->grass_color[k];
-            else if (biome && face && face->tint_mode == MAAGE_BLOCK_TINT_FOLIAGE)
-                color[k] *= biome->foliage_color[k];
+    for (z = 0; z < patches + 2U; ++z) for (x = 0; x < patches + 2U; ++x) {
+        wx = cx * 16 + ((int) x - 1) * (int) step + (int) step / 2;
+        wz = cz * 16 + ((int) z - 1) * (int) step + (int) step / 2;
+        samples[z][x] = lod_sample(world, registry, biomes, wx, wz);
+    }
+    for (z = 1U; z <= patches; ++z) for (x = 1U; x <= patches; ++x) {
+        center = &samples[z][x];
+        if (!center->ground_state) continue;
+        x0 = (float) (cx * 16 + ((int) x - 1) * (int) step);
+        z0 = (float) (cz * 16 + ((int) z - 1) * (int) step);
+        x1 = x0 + (float) step;
+        z1 = z0 + (float) step;
+        lod_write_face(v, ix, &count, center->ground_state, center->biome, MAAGE_FACE_POSITIVE_Y,
+            x0, z0, x1, z1, 0.0f, (float) center->ground, 0);
+        for (side = 0U; side < 4U; ++side) {
+            neighbor = &samples[(int) z + dz[side]][(int) x + dx[side]];
+            /* Missing neighbors are unobserved, not an infinitely deep void. */
+            neighbor_heights[side] = neighbor->present ? neighbor->ground : center->ground;
+            if (neighbor_heights[side] < center->ground)
+                lod_write_face(v, ix, &count, center->ground_state, center->biome, faces[side],
+                    x0, z0, x1, z1, (float) neighbor_heights[side], (float) center->ground, 0);
         }
-        x[0] = x[3] = (float) wx;
-        x[1] = x[2] = (float) wx + step;
-        z[0] = z[1] = (float) wz + step;
-        z[2] = z[3] = (float) wz;
-        base = (j * count + i) * 4U;
-        ix_base = (j * count + i) * 6U;
-        for (k = 0; k < 4; ++k) {
-            v[base + k].position[0] = x[k];
-            v[base + k].position[1] = (float) h[k];
-            v[base + k].position[2] = z[k];
-            /* Tile-enabled shader coordinates are RELATIVE (0..1), not
-             * absolute atlas coordinates. Otherwise tile mapping happens twice. */
-            v[base + k].uv[0] = k == 1U || k == 2U ? 1.0f : 0.0f;
-            v[base + k].uv[1] = k <= 1U ? 1.0f : 0.0f;
-            v[base + k].color[0] = color[0];
-            v[base + k].color[1] = color[1];
-            v[base + k].color[2] = color[2];
-            v[base + k].color[3] = 1.0f;
-            v[base + k].light[0] = 1.0f;
-            v[base + k].light[1] = 0;
-            v[base + k].material = MAAGE_MESH_MATERIAL_OPAQUE;
-            v[base + k].tile[0] = uv[0];
-            v[base + k].tile[1] = uv[1];
-            v[base + k].tile[2] = uv[2];
-            v[base + k].tile[3] = uv[3];
-        }
-        ix[ix_base + 0] = base + 0U;
-        ix[ix_base + 1] = base + 1U;
-        ix[ix_base + 2] = base + 2U;
-        ix[ix_base + 3] = base + 0U;
-        ix[ix_base + 4] = base + 2U;
-        ix[ix_base + 5] = base + 3U;
+        if (center->water_state && center->water > center->ground)
+            lod_write_face(v, ix, &count, center->water_state, center->biome, MAAGE_FACE_POSITIVE_Y,
+                x0, z0, x1, z1, 0.0f, (float) center->water - 0.10f, 1);
+    }
+    if (!count) {
+        free(v);
+        free(ix);
+        return maage_status_make(MAAGE_STATUS_NOOP, 0, MAAGE_OPERATION_CREATE, 0);
     }
     data->vertices = v;
-    data->vertex_count = quads * 4U;
+    data->vertex_count = count * 4U;
     data->indices = ix;
-    data->index_count = quads * 6U;
+    data->index_count = count * 6U;
     *vertices = v;
     *indices = ix;
     return maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_CREATE, 0);
