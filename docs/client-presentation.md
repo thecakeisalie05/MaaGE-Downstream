@@ -82,3 +82,20 @@ Block fragments consume deduplicated authoritative Session break occurrences, in
 Video Settings → Level of Detail exposes Native LOD (default OFF), a far render radius (8 or 16 chunks in this initial bounded implementation), and quality (High = 1-block heightmap grid, Balanced = 2-block grid, Performance = 4-block grid). When enabled, the Client may draw simplified atlas-textured top surfaces outside the ordinary Render Distance; full terrain remains the fallback while uploads complete. Resource reloads, world changes, and chunk retirement discard the cached LOD meshes.
 
 **Current limitation:** far columns still use the ordinary Server/Client full-chunk stream, lighting and meshing pipeline. This is a native surface LOD *rendering preview*, not Distant Horizons-like independent distant terrain storage/generation or scalable hundreds-of-chunks viewing. Large radii may increase CPU, GPU and memory cost. It lacks terrain skirts, cave/structure representations, and occlusion-aware transitions. No LOD geometry enters physics, gameplay, authoritative World saves or collision. Compare profiling captures with LOD off/on at identical full render distance, and inspect `maage.client.lod` log summaries.
+
+### F2 screenshots and session archives
+
+On Windows, press **F2** while MaaGE Client is focused to save a PNG of the
+visible game client area in the selected instance's mapped `screenshots`
+directory. Capture uses Windows' desktop composition; it is not a GPU
+framebuffer readback. The game must be visible and unobstructed (no
+minimization, occluding windows, or exclusive fullscreen). Screenshot errors
+are logged as `maage.client.screenshot`; successful saves log the PNG path.
+
+The Ctrl+B development runner sets `MAAGE_SCREENSHOT_SESSION` to a unique
+run identifier. Screenshot filenames include that identifier. When the
+game process exits, the profiler ZIP collects only matching screenshots
+from the instance's **default private** `screenshots` folder under
+`screenshots/`, plus the diagnostic logs/CSVs and a `run.json` file
+listing the images. Custom/shared screenshot folder mappings are not yet
+automatically discovered by the PowerShell archiver.
