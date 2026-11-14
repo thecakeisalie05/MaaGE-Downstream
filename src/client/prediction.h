@@ -2,6 +2,7 @@
 #define MAAGE_CLIENT_PREDICTION_H
 #include "maage/session_protocol.h"
 #include "maage/render.h"
+#include "lod.h"
 #define MAAGE_CLIENT_PREDICTIONS 32U
 /* Rendering owns both the immutable authoritative mesh and a temporary view.
  * CPU sources transfer from the existing mesh mailbox; no World pointers. */
@@ -10,6 +11,7 @@ typedef struct maage_client_chunk_mesh {
     int presented, first_frame;
     unsigned long revision, visual_revision, presentation_generation, filtered_revision, filtered_generation;
     maage_render_mesh *mesh, *prediction, *prepared;
+    maage_client_lod_mesh lod;
     maage_world_mesh *source;
     size_t vertices, indices;
     double initialized_at, uploaded_at;
