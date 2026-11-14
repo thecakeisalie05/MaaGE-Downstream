@@ -24,6 +24,7 @@
 #include "debug.h"
 #include "profiler.h"
 #include "lod.h"
+#include "screenshot.h"
 #include "interaction.h"
 #include "prediction.h"
 #include "item_entities.h"
@@ -756,6 +757,10 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     maage_client_profiler profiler;
     maage_client_profile_marks profile_marks;
     char profile_logs[MAAGE_PATH_CAPACITY];
+    char screenshot_dir[MAAGE_PATH_CAPACITY], screenshot_file[MAAGE_PATH_CAPACITY];
+    const char *screenshot_session = getenv("MAAGE_SCREENSHOT_SESSION");
+    unsigned int screenshot_count = 0;
+    int screenshot_requested = 0;
     maage_client_mesh_stats mesh_stats;
     maage_client_ui_input ui_input;
     const maage_render_ui_data *ui_draw;
@@ -816,6 +821,7 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     memset(&collision, 0, sizeof(collision));
     memset(&debug, 0, sizeof(debug));
     memset(&profiler, 0, sizeof(profiler));
+    screenshot_dir[0] = 0;
     memset(&lod, 0, sizeof(lod));
     memset(&outbox, 0, sizeof(outbox));
     outbox.diagnostics = maage_log_enabled("maage.client.latency", MAAGE_LOG_VERBOSE) && getenv("MAAGE_WORLD_DIAGNOSTICS") && !strcmp(getenv("MAAGE_WORLD_DIAGNOSTICS"), "1");
@@ -1159,6 +1165,7 @@ choose_world:
         last = now;
         if (raw_elapsed < 0.0) raw_elapsed = 0.0;
         if (!retired_in_shutdown && retired_resources.view && !maage_world_presentation_borrowed(visual_world, maage_content_view_blocks(retired_resources.view))) maage_client_resources_destroy(&retired_resources);
+        screenshot_requested = input.focused && input.pressed[MAAGE_INPUT_KEY_F2];
         if (input.focused && input.keys[MAAGE_INPUT_KEY_F3] && input.pressed[MAAGE_INPUT_KEY_T]) {
             maage_client_lod_cancel(&lod);
             operation = maage_client_reload_resources(system, directory, content, renderer, ui, visual_world, &resources, &retired_resources, &atlas, &environment_view, &item_entities, &cache, &interaction, &first_person, &player_view, &prediction, trace);
@@ -1791,6 +1798,22 @@ choose_world:
             rendered = maage_renderer_draw_frame(renderer, cache.draws, draw_count, matrix, ui_draw, trace);
             if (maage_status_failed(rendered)) goto done;
             if (maage_status_code(rendered) == MAAGE_STATUS_SUCCESS) maage_client_item_entities_submitted(item_entities);
+            if (screenshot_requested && maage_status_code(rendered) == MAAGE_STATUS_SUCCESS) {
+                maage_status shot;
+                if (!screenshot_dir[0]) {
+                    shot = maage_instance_resolve_path(instance, MAAGE_INSTANCE_FOLDER_SCREENSHOTS, NULL, screenshot_dir, sizeof(screenshot_dir));
+                    if (!maage_status_failed(shot)) shot = maage_storage_directories(screenshot_dir);
+                } else shot = maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_WRITE, 0);
+                if (!maage_status_failed(shot)) {
+                    shot = maage_client_screenshot_save(screenshot_dir, screenshot_session, screenshot_count + 1U,
+                        screenshot_file, sizeof(screenshot_file));
+                    if (!maage_status_failed(shot)) {
+                        ++screenshot_count;
+                        maage_log_info("maage.client.screenshot", "F2 screenshot %u saved to %s.", screenshot_count, screenshot_file);
+                    }
+                }
+                if (maage_status_failed(shot)) maage_log_status(MAAGE_LOG_WARNING, "maage.client.screenshot", shot, "F2 screenshot capture failed (game window must be visible and unobstructed).");
+            }
         } else {
             profile_marks.draw_begin = profiler.active ? maage_time_monotonic_seconds() : 0;
             rendered = MAAGE_STATUS_VALUE(MAAGE_STATUS_NOOP, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPDATE, 0);
