@@ -28,6 +28,8 @@ typedef struct maage_client_lod {
     unsigned long completed;
 } maage_client_lod;
 
+typedef struct maage_client_chunk_mesh maage_client_chunk_mesh;
+/* Source is the resident renderer-owned mesh slot; no new World ownership. */
 typedef struct maage_client_lod_source {
     int x, z, present;
     unsigned long revision;
@@ -42,6 +44,6 @@ void maage_client_lod_mesh_clear(maage_client_lod_mesh *mesh);
  * Failures preserve the full-resolution fallback and cancel the candidate. */
 maage_status maage_client_lod_step(maage_client_lod *lod, maage_world *world,
     maage_renderer *renderer, maage_render_texture *atlas,
-    const maage_client_lod_source *sources, size_t count,
+    maage_client_chunk_mesh *slots, size_t count,
     int center_x, int center_z, int detail_radius, int far_radius, int quality);
 #endif
