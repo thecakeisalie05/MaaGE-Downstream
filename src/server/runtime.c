@@ -55,7 +55,9 @@ struct maage_server_runtime {
     unsigned long effect_random;
     maage_status last_world_notice, crafting_failure;
     int publication_dirty;
-    int sneaking, diagnostics;
+    int sneaking, diagnostics, profiling;
+    unsigned long profile_ticks, profile_slow_ticks;
+    double profile_start, profile_total_ms, profile_game_ms, profile_entities_ms, profile_world_ms, profile_publish_ms, profile_max_ms;
     unsigned long last_prediction;
     struct {
         int active, resolved, placing;
@@ -892,6 +894,35 @@ static void server_close_world(maage_server_runtime *runtime, maage_status_trace
     (void) trace;
 }
 
+/* This records only the server owner thread's synchronous work.
+ * Async worker time and blocking resource I/O require separate metrics. */
+static void server_profile_tick(maage_server_runtime *r, double began, double gameplay_end, double world_began, double world_end, double finished) {
+    double total = (finished - began) * 1000.0;
+    if (!r->profiling || began < 0 || gameplay_end < began || world_began < gameplay_end || world_end < world_began || finished < world_end) return;
+    ++r->profile_ticks;
+    r->profile_total_ms += total;
+    r->profile_game_ms += (gameplay_end - began) * 1000.0;
+    r->profile_entities_ms += (world_began - gameplay_end) * 1000.0;
+    r->profile_world_ms += (world_end - world_began) * 1000.0;
+    r->profile_publish_ms += (finished - world_end) * 1000.0;
+    if (total > r->profile_max_ms) r->profile_max_ms = total;
+    if (total > 50.0) {
+        ++r->profile_slow_ticks;
+        if (r->profile_slow_ticks == 1 || r->profile_slow_ticks % 25 == 0)
+            maage_log_warning("maage.server.profiler", "Slow authoritative tick=%lu total=%.2fms gameplay=%.2fms entities/containers=%.2fms world=%.2fms publish=%.2fms (budget 50ms).",
+                r->tick, total, (gameplay_end - began) * 1000.0, (world_began - gameplay_end) * 1000.0,
+                (world_end - world_began) * 1000.0, (finished - world_end) * 1000.0);
+    }
+    if (finished - r->profile_start >= 5.0 && r->profile_ticks) {
+        double count = (double) r->profile_ticks;
+        maage_log_info("maage.server.profiler", "ticks=%lu average=%.2fms max=%.2fms over_50ms=%lu gameplay=%.2fms entities/containers=%.2fms world=%.2fms publish=%.2fms",
+            r->profile_ticks, r->profile_total_ms / count, r->profile_max_ms, r->profile_slow_ticks,
+            r->profile_game_ms / count, r->profile_entities_ms / count, r->profile_world_ms / count, r->profile_publish_ms / count);
+        r->profile_start = finished;
+        r->profile_ticks = r->profile_slow_ticks = 0;
+        r->profile_total_ms = r->profile_max_ms = r->profile_game_ms = r->profile_entities_ms = r->profile_world_ms = r->profile_publish_ms = 0;
+    }
+}
 static maage_status server_tick(maage_server_runtime *runtime, double scheduled_at, maage_status_trace *trace) {
     maage_gameplay_intent intent = runtime->sampled;
     const maage_player *use_observer = NULL;
@@ -900,7 +931,7 @@ static maage_status server_tick(maage_server_runtime *runtime, double scheduled_
     size_t sound_count = 0, i;
     maage_status result;
     unsigned long broken = runtime->game.blocks_broken, placed = runtime->game.blocks_placed;
-    double began = runtime->diagnostics ? maage_time_monotonic_seconds() : -1, gameplay_finished, world_began;
+    double began = runtime->diagnostics || runtime->profiling ? maage_time_monotonic_seconds() : -1, gameplay_finished, world_began, world_finished;
     size_t entities_before = runtime->diagnostics ? maage_entities_count(maage_world_entities(runtime->world)) : 0;
     /* A pulse sampled between steps survives latest-state replacement, but
      * every pulse is consumed once. Held attack/use continue per tick. */
@@ -922,7 +953,7 @@ static maage_status server_tick(maage_server_runtime *runtime, double scheduled_
         else intent.use = intent.use_pressed = 0;
     }
     result = maage_gameplay_tick(&runtime->game, &runtime->player, runtime->world, maage_content_items(runtime->content), &intent, use_observer, sounds, sizeof(sounds) / sizeof(sounds[0]), &sound_count, trace);
-    gameplay_finished = runtime->diagnostics ? maage_time_monotonic_seconds() : -1;
+    gameplay_finished = runtime->diagnostics || runtime->profiling ? maage_time_monotonic_seconds() : -1;
     if (runtime->game.blocks_broken != broken) {
         runtime->last_break_tick = runtime->game.ticks;
         server_record_action(runtime, 0);
@@ -968,14 +999,16 @@ static maage_status server_tick(maage_server_runtime *runtime, double scheduled_
     if (maage_status_failed(result)) return MAAGE_STATUS_PROPAGATE(trace, result, MAAGE_CONTEXT_SERVER, MAAGE_OPERATION_TICK);
     server_service_container(runtime);
     server_predictions(runtime);
-    world_began = runtime->diagnostics ? maage_time_monotonic_seconds() : -1;
+    world_began = runtime->diagnostics || runtime->profiling ? maage_time_monotonic_seconds() : -1;
     result = maage_world_tick(runtime->world);
+    world_finished = runtime->profiling ? maage_time_monotonic_seconds() : -1;
     if (runtime->diagnostics && intent.attack) MAAGE_LOG_VERBOSE_EVENT("maage.server.latency", maage_log_verbose("maage.server.latency", "gameplay_tick=%lu post_gameplay_ms=%.3f world_tick_ms=%.3f", runtime->game.ticks, (world_began - gameplay_finished) * 1000, (maage_time_monotonic_seconds() - world_began) * 1000));
     if (maage_status_failed(result)) return MAAGE_STATUS_PROPAGATE(trace, result, MAAGE_CONTEXT_SERVER, MAAGE_OPERATION_TICK);
     ++runtime->tick;
     result = server_emit_motion(runtime, trace);
     if (maage_status_failed(result)) return result;
     if (maage_status_is_warning(result)) server_status_event(runtime, result, trace);
+    if (runtime->profiling) server_profile_tick(runtime, began, gameplay_finished, world_began, world_finished, maage_time_monotonic_seconds());
     return server_status(MAAGE_STATUS_SUCCESS, MAAGE_OPERATION_TICK);
 }
 
@@ -1182,6 +1215,8 @@ maage_status maage_server_runtime_create(const maage_server_config *config, maag
     runtime = (maage_server_runtime *) calloc(1, sizeof(*runtime));
     if (!runtime) return server_status(MAAGE_STATUS_ALLOCATION_FAILED, MAAGE_OPERATION_CREATE);
     runtime->diagnostics = maage_log_enabled("maage.server.latency", MAAGE_LOG_VERBOSE) && getenv("MAAGE_WORLD_DIAGNOSTICS") && !strcmp(getenv("MAAGE_WORLD_DIAGNOSTICS"), "1");
+    runtime->profiling = getenv("MAAGE_PROFILE") && !strcmp(getenv("MAAGE_PROFILE"), "1");
+    if (runtime->profiling) runtime->profile_start = maage_time_monotonic_seconds();
     runtime->config = *config;
     if (config->entity_policy) {
         runtime->entity_policy = *config->entity_policy;
