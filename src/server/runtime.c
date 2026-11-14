@@ -1293,6 +1293,21 @@ int maage_server_runtime_ready(maage_server_runtime *runtime) {
     return ready;
 }
 
+int maage_server_runtime_lod_identity(maage_server_runtime *runtime,
+    char world_id[37], maage_world_seed *seed, maage_generation_policy *policy) {
+    int ready;
+    if (!runtime || !world_id || !seed || !policy) return 0;
+    maage_mutex_lock(runtime->mutex);
+    ready = runtime->ready && !runtime->stop && !runtime->finished;
+    if (ready) {
+        memcpy(world_id, runtime->record.id, sizeof(runtime->record.id));
+        *seed = runtime->record.seed;
+        *policy = runtime->record.generation_policy;
+    }
+    maage_mutex_unlock(runtime->mutex);
+    return ready;
+}
+
 int maage_server_runtime_finished(maage_server_runtime *runtime) {
     int finished;
     if (!runtime) return 1;

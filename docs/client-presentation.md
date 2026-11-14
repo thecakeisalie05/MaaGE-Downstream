@@ -99,3 +99,32 @@ from the instance's **default private** `screenshots` folder under
 `screenshots/`, plus the diagnostic logs/CSVs and a `run.json` file
 listing the images. Custom/shared screenshot folder mappings are not yet
 automatically discovered by the PowerShell archiver.
+
+### Independent persistent distant terrain (experimental)
+
+The Client's distant tile worker reads the seed and generation policy copied
+from the authoritative Server's immutable world metadata after it becomes
+ready. A separate Base terrain sampler generates far surface height, surface
+block ID, biome and water cover **without allocating or streaming normal
+World chunks**. Each 16×16 source tile is stored in a world UUID-scoped
+`worlds/<UUID>/lod-cache/v1/` binary cache with a magic/version/seed/policy
+header. Tile files are written through a temporary file and atomic promotion.
+This first version supports the built-in deterministic Base terrain generator;
+terrain modified by players or other generators is not yet included in the
+distant cache. The cache format is local-native and intentionally versioned
+for invalidation on generator or content changes.
+
+GPU meshes and their upload lifecycle are owned by the independent distant
+tile manager, not by normal Client chunk slots. The ordinary World is limited
+to the chosen full-resolution radius plus a three-chunk transition margin;
+distant tiles are progressively generated/read from disk beyond it. The first
+LOD band uses block-aligned samples with biome tint, exposed height steps and
+water. The distant system is currently bounded by the existing 16-chunk UI
+maximum and one new tile build/upload step per frame.
+
+**Not yet seamless or fully DH-equivalent:** geometry is a heightfield with no
+trees, caves or changed blocks; no cross-fade/skirt stitching or GPU frustum
+culling is implemented. Slow disk or terrain sampling may cause build hitches.
+Use this only for experimentation until build/runtime, cache-integrity and
+boundary tests pass. The independent cache is an optional rendering derivative,
+not a substitute for authoritative World saves.

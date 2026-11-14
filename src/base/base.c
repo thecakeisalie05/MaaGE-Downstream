@@ -4,6 +4,60 @@
 #include <stdlib.h>
 #include <string.h>
 
+const maage_base_ids *maage_base_generation_references(const maage_block_registry *registry);
+struct maage_base_lod_sampler {
+    const maage_base_ids *ids;
+    const maage_biome_registry *biomes;
+    maage_world_seed seed;
+    maage_generation_policy policy;
+    maage_generation_region_cache *regions;
+};
+maage_base_lod_sampler *maage_base_lod_sampler_create(
+    const maage_block_registry *blocks, const maage_biome_registry *biomes,
+    maage_world_seed seed, const maage_generation_policy *policy) {
+    maage_base_lod_sampler *sampler;
+    const maage_base_ids *ids;
+    if (!blocks || !biomes) return NULL;
+    ids = maage_base_generation_references(blocks);
+    if (!ids) return NULL;
+    sampler = (maage_base_lod_sampler *) calloc(1, sizeof(*sampler));
+    if (!sampler) return NULL;
+    sampler->regions = (maage_generation_region_cache *) calloc(1, sizeof(*sampler->regions));
+    if (!sampler->regions) {
+        free(sampler);
+        return NULL;
+    }
+    sampler->ids = ids;
+    sampler->biomes = biomes;
+    sampler->seed = seed;
+    if (policy) sampler->policy = *policy;
+    else maage_generation_policy_default(&sampler->policy);
+    if (!maage_generation_policy_valid(&sampler->policy)) {
+        maage_base_lod_sampler_destroy(sampler);
+        return NULL;
+    }
+    return sampler;
+}
+int maage_base_lod_sampler_sample(maage_base_lod_sampler *sampler,
+    int x, int z, maage_base_lod_column *column) {
+    maage_generation_sample sample;
+    if (!sampler || !column || x < -MAAGE_WORLD_LIMIT || x > MAAGE_WORLD_LIMIT ||
+        z < -MAAGE_WORLD_LIMIT || z > MAAGE_WORLD_LIMIT) return 0;
+    if (!maage_generation_sample_at(sampler->ids, sampler->seed, sampler->biomes,
+            &sampler->policy, x, z, &sample, sampler->regions)) return 0;
+    column->height = sample.height;
+    column->surface = sample.surface;
+    column->biome = sample.biome;
+    column->water_height = sample.height < sampler->policy.sea_level ? sampler->policy.sea_level : 0;
+    column->water = column->water_height ? sampler->ids->state_water : 0;
+    return 1;
+}
+void maage_base_lod_sampler_destroy(maage_base_lod_sampler *sampler) {
+    if (!sampler) return;
+    free(sampler->regions);
+    free(sampler);
+}
+
 const maage_base_ids *maage_base_generation_references(const maage_block_registry *registry) {
     const maage_registry_bindings *bindings = maage_block_registry_bindings(registry);
     return bindings ? (const maage_base_ids *) bindings->generation_context : NULL;

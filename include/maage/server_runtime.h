@@ -50,6 +50,10 @@ maage_status maage_server_runtime_start(maage_server_runtime *runtime, maage_sta
 /* True only after the owner has loaded the spawn column, not merely started.
  * Nonblocking and synchronized for Client bootstrap polling. */
 int maage_server_runtime_ready(maage_server_runtime *runtime);
+/* A copy of immutable world identity, available once ready; caller provides
+ * 37-byte UUID buffer. No direct access to owner-thread World state. */
+int maage_server_runtime_lod_identity(maage_server_runtime *runtime,
+    char world_id[37], maage_world_seed *seed, maage_generation_policy *policy);
 /* Safe on a different thread, idempotent, and wakes the tick scheduler. */
 void maage_server_runtime_request_stop(maage_server_runtime *runtime);
 /* May block; never call on the Server thread or a rendering hot path. Returns
