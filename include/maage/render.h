@@ -136,6 +136,8 @@ maage_status maage_renderer_set_clear_color(maage_renderer *renderer, float red,
  * Optional screen batches draw behind geometry and before the main UI. Borrow
  * data/textures through subsequent draw_frame calls; clear before destruction.
  * Implemented mesh/UI backends only; others return UNSUPPORTED. */
+/* Constant unlit floor for dimensions without celestial daylight; zero disables. */
+maage_status maage_renderer_set_ambient_light(maage_renderer *, float);
 maage_status maage_renderer_set_scene(maage_renderer *renderer, float sky_light, const maage_render_ui_data *background, const maage_render_ui_data *overlay);
 /* Exponential view-depth fog on scene meshes/instances; density zero disables.
  * RGB stays in [0,1], density is finite/nonnegative. Foreground/UI stay clear.
@@ -206,6 +208,10 @@ maage_status maage_renderer_upload_index_view(const maage_render_mesh *source, c
  * Destroy cancels pending work without waiting for the GPU. */
 maage_status maage_renderer_begin_geometry(maage_renderer *renderer, maage_mesh_preparation **preparation, maage_render_texture *texture, maage_render_mesh **mesh, maage_status_trace *trace);
 maage_status maage_render_mesh_upload_step(maage_render_mesh *mesh, size_t byte_budget, maage_status_trace *trace);
+/* Owner-thread presentation only: 0 normal shading, 1 full environmental fog.
+ * Does not alter geometry, alpha or material order. Copied at draw submission.
+ * Applies to direct scene meshes, not instances or foreground. */
+maage_status maage_render_mesh_set_fog_blend(maage_render_mesh *mesh, float amount);
 maage_status maage_render_mesh_destroy(maage_render_mesh *mesh);
 /* Clears, draws, and presents one mesh. Uses the same visibility/error behavior
  * as present, nearest texture sampling, depth testing and CCW front faces.

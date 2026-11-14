@@ -118,6 +118,7 @@ maage_status maage_client_ui_create(maage_renderer *renderer, maage_window *wind
     ui->last_nonwindowed_mode = ui->confirmed_fullscreen_style = MAAGE_CLIENT_BORDERLESS;
     ui->fps_step = 26;
     ui->render_distance = MAAGE_CLIENT_RENDER_DISTANCE_DEFAULT;
+    ui->chunk_fade_ms = MAAGE_CLIENT_CHUNK_FADE_DEFAULT_MS;
     ui->lod_enabled = 0;
     ui->lod_distance = MAAGE_CLIENT_LOD_DISTANCE_DEFAULT;
     ui->lod_quality = 1;
@@ -149,6 +150,7 @@ maage_status maage_client_ui_create(maage_renderer *renderer, maage_window *wind
     if (!maage_status_failed(result)) result = maage_client_ui_options_register(ui);
     if (!maage_status_failed(result)) result = maage_client_ui_controls_register(ui);
     if (!maage_status_failed(result)) result = maage_client_ui_inventory_register(ui);
+    if (!maage_status_failed(result)) result = maage_client_ui_credits_register(ui, application_data, game_resources ? maage_content_presentation(game_resources->content) : NULL, trace);
     if (maage_status_failed(result)) {
         maage_client_ui_destroy(ui);
         return MAAGE_STATUS_TRACE(trace, result, MAAGE_CONTEXT_GUI, MAAGE_OPERATION_INITIALIZE);
@@ -180,6 +182,7 @@ maage_status maage_client_ui_destroy(maage_client_ui *ui) {
     if (!ui) return maage_status_make(MAAGE_STATUS_NOOP, 0, MAAGE_OPERATION_DESTROY, 0);
     maage_render_texture_destroy(ui->resources.texture);
     maage_client_item_icon_cache_destroy(ui->model_icons);
+    free(ui->credit_lines);
     free(ui->creative_filter);
     free(ui->commands);
     free(ui->debug_cache.vertices);
@@ -282,6 +285,7 @@ maage_status maage_client_ui_update(maage_client_ui *ui, const maage_client_ui_i
                           maage_client_ui_current(ui) == MAAGE_CLIENT_UI_CRAFTING_TABLE)) {
         ui->dragging_fps = 0;
         ui->dragging_distance = 0;
+        ui->dragging_chunk_fade = 0;
         ui->dragging_volume = 0;
         ui->dragging_fov = 0;
         return maage_client_ui_modal(ui) ? maage_client_ui_back(ui) : maage_client_ui_open(ui, MAAGE_CLIENT_UI_PAUSE);
@@ -375,6 +379,7 @@ maage_status maage_client_ui_apply_options(maage_client_ui *ui, const maage_clie
     if (ui->fov_degrees > 110) ui->fov_degrees = 110;
     ui->fps_step = options->max_fps ? options->max_fps / 10 - 1 : 26;
     ui->render_distance = options->render_distance;
+    ui->chunk_fade_ms = options->chunk_fade_ms >= 0 && options->chunk_fade_ms <= MAAGE_CLIENT_CHUNK_FADE_MAX_MS && !(options->chunk_fade_ms % MAAGE_CLIENT_CHUNK_FADE_STEP_MS) ? options->chunk_fade_ms : MAAGE_CLIENT_CHUNK_FADE_DEFAULT_MS;
     ui->lod_enabled = options->lod_enabled != 0;
     ui->lod_distance = options->lod_distance;
     if (ui->lod_distance < 1 || ui->lod_distance > MAAGE_CLIENT_LOD_DISTANCE_MAX) ui->lod_distance = MAAGE_CLIENT_LOD_DISTANCE_DEFAULT;
@@ -418,6 +423,7 @@ void maage_client_ui_get_options(const maage_client_ui *ui, maage_client_options
     options->fov_degrees = ui->fov_degrees;
     options->max_fps = ui->fps_step == 26 ? 0 : (ui->fps_step + 1) * 10;
     options->render_distance = ui->render_distance;
+    options->chunk_fade_ms = ui->chunk_fade_ms;
     options->lod_enabled = ui->lod_enabled;
     options->lod_distance = ui->lod_distance;
     options->lod_quality = ui->lod_quality;
@@ -452,6 +458,9 @@ int maage_client_ui_max_fps(const maage_client_ui *ui) {
 }
 int maage_client_ui_render_distance(const maage_client_ui *ui) {
     return ui ? ui->render_distance : MAAGE_CLIENT_RENDER_DISTANCE_DEFAULT;
+}
+int maage_client_ui_chunk_fade_ms(const maage_client_ui *ui) {
+    return ui ? ui->chunk_fade_ms : MAAGE_CLIENT_CHUNK_FADE_DEFAULT_MS;
 }
 int maage_client_ui_lod_enabled(const maage_client_ui *ui) { return ui ? ui->lod_enabled : 0; }
 int maage_client_ui_lod_distance(const maage_client_ui *ui) { return ui ? ui->lod_distance : MAAGE_CLIENT_LOD_DISTANCE_DEFAULT; }
@@ -599,7 +608,8 @@ maage_status maage_client_ui_draw(maage_client_ui *ui, const maage_client_ui_deb
     ui->clip.x = ui->clip.y = 0;
     ui->clip.width = ui->width;
     ui->clip.height = ui->height;
-    if (ui->has_snapshot) maage_client_ui_gameplay_draw(ui);
+    id = maage_client_ui_current(ui);
+    if (ui->has_snapshot && id != MAAGE_CLIENT_UI_LOADING && id != MAAGE_CLIENT_UI_SAVING) maage_client_ui_gameplay_draw(ui);
     if (ui->has_snapshot && !maage_client_ui_modal(ui)) {
         ui->batch.invert_first_index = ui->batch.index_count;
         rectangle.x = (float) (int) (ui->width * 0.5f) - 7.0f;
@@ -608,7 +618,7 @@ maage_status maage_client_ui_draw(maage_client_ui *ui, const maage_client_ui_deb
         maage_client_ui_rectangle(ui, rectangle, 0, 0, 16.0f / ui->resources.atlas_edge, 16.0f / ui->resources.atlas_edge, 1, 1, 1, 1);
         ui->batch.invert_index_count = ui->batch.index_count - ui->batch.invert_first_index;
     }
-    if (ui->debug && debug) {
+    if (ui->debug && debug && id != MAAGE_CLIENT_UI_LOADING && id != MAAGE_CLIENT_UI_SAVING) {
         maage_client_ui_debug_column(ui, debug->left, debug->left_count, 0);
         maage_client_ui_debug_right(ui, debug);
     }
@@ -619,11 +629,11 @@ maage_status maage_client_ui_draw(maage_client_ui *ui, const maage_client_ui_deb
     if (id) {
         rectangle = ui->clip;
         if (id == MAAGE_CLIENT_UI_CONTROLS) maage_client_ui_menu_background(ui);
-        else if (ui->has_snapshot) maage_client_ui_gradient(ui, rectangle, 0xC0101010UL, 0xD0101010UL);
+        else if (ui->has_snapshot && id != MAAGE_CLIENT_UI_LOADING && id != MAAGE_CLIENT_UI_SAVING) maage_client_ui_gradient(ui, rectangle, 0xC0101010UL, 0xD0101010UL);
         else if (id == MAAGE_CLIENT_UI_OPTIONS || id == MAAGE_CLIENT_UI_VIDEO_SETTINGS || id == MAAGE_CLIENT_UI_LOD_SETTINGS || id == MAAGE_CLIENT_UI_SOUND_SETTINGS || id == MAAGE_CLIENT_UI_CONTROLS) maage_client_ui_menu_background(ui);
         /* Only interactive content is kept within safe-area bounds; the title
          * panorama and its darkening layer must fill even the notch region. */
-        ui->clip = id == MAAGE_CLIENT_UI_TITLE ? rectangle : ui->content;
+        ui->clip = id == MAAGE_CLIENT_UI_TITLE || id == MAAGE_CLIENT_UI_LOADING || id == MAAGE_CLIENT_UI_SAVING ? rectangle : ui->content;
         screen = maage_client_ui_screen_get(ui, id);
         screen->draw(ui, screen->context);
     }
@@ -655,7 +665,7 @@ maage_status maage_client_ui_open_root(maage_client_ui *ui, maage_client_ui_scre
     if (!ui) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_GUI, MAAGE_OPERATION_NAVIGATE, 0);
     ui->navigation.depth = 0;
     ui->selected = 0;
-    if (id == MAAGE_CLIENT_UI_TITLE) {
+    if (id == MAAGE_CLIENT_UI_TITLE || id == MAAGE_CLIENT_UI_SAVING) {
         ui->has_snapshot = 0;
         ui->container_command_pending = 0;
         ui->container_command_sequence = 0;

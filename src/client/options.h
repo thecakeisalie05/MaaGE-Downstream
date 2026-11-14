@@ -40,10 +40,13 @@ typedef enum maage_client_audio_bus {
 #define MAAGE_CLIENT_AUDIO_KEY_WEATHER "weather"
 #define MAAGE_CLIENT_AUDIO_KEY_MUSIC "music"
 #define MAAGE_CLIENT_AUDIO_KEY_UI "ui"
-#define MAAGE_CLIENT_RENDER_DISTANCE_DEFAULT 8
+#define MAAGE_CLIENT_RENDER_DISTANCE_DEFAULT 12
 #define MAAGE_CLIENT_LOD_DISTANCE_DEFAULT 16
 #define MAAGE_CLIENT_LOD_DISTANCE_MAX 16
 #define MAAGE_CLIENT_RENDER_DISTANCE_SLIDER_MAX 32
+#define MAAGE_CLIENT_CHUNK_FADE_DEFAULT_MS 750
+#define MAAGE_CLIENT_CHUNK_FADE_MAX_MS 2000
+#define MAAGE_CLIENT_CHUNK_FADE_STEP_MS 250
 typedef struct maage_client_options {
     maage_controls *controls; /* Borrowed on owner thread; saves serialize before worker handoff. */
     unsigned long controls_revision;
@@ -54,6 +57,7 @@ typedef struct maage_client_options {
     int max_fps;                                    /* 0 unlimited, otherwise 10..260 in increments of 10. */
     int render_distance;                            /* Full-detail chunk radius. */
     int lod_enabled, lod_distance, lod_quality; /* Far visual radius and 0..2 coarseness; no gameplay effect. */
+    int chunk_fade_ms; /* 0 disables; milliseconds, in slider steps. */
     int vsync;
     int view_bobbing;
     int gui_scale; /* 0 Auto; positive backing-pixel factors (1 Small, 2 Normal, 3 Large). */

@@ -11,7 +11,7 @@
 typedef struct maage_distant_lod maage_distant_lod;
 maage_distant_lod *maage_distant_lod_create(
     const char *instance_directory, const char world_id[37],
-    maage_world_seed seed, const maage_generation_policy *policy,
+    maage_dimension_id dimension, maage_world_seed seed, const maage_generation_policy *policy,
     const maage_block_registry *blocks, const maage_biome_registry *biomes);
 void maage_distant_lod_destroy(maage_distant_lod *lod);
 void maage_distant_lod_invalidate_gpu(maage_distant_lod *lod);

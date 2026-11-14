@@ -3,6 +3,7 @@ using namespace metal;
 #define MAAGE_SHADER_VEC2 float2
 #define MAAGE_SHADER_VEC3 float3
 #define MAAGE_SHADER_VEC4 float4
+#define MAAGE_SHADER_MAT4 float4x4
 #define MAAGE_SHADER_MOD fmod
 #define MAAGE_SHADER_SATURATE(value) saturate(value)
 #include "../render_shader_common.h"
@@ -29,7 +30,7 @@ struct maage_vertex {
 };
 struct maage_surface {
     packed_float3 animation;
-    float material;
+    float material_rotation;
     packed_float4 tile;
 };
 struct maage_fragment {
@@ -40,6 +41,8 @@ struct maage_fragment {
     float material [[flat]];
     float3 fog_position;
     float4 tile [[flat]];
+    float3 world_position;
+    uint rotation_face [[flat]];
 };
 vertex maage_fragment maage_mesh_vertex_shader(uint index [[vertex_id]], const device maage_vertex *vertices [[buffer(0)]], constant maage_uniforms &uniforms [[buffer(1)]], const device maage_surface *surfaces [[buffer(2)]]) {
     maage_fragment result;
@@ -53,14 +56,17 @@ vertex maage_fragment maage_mesh_vertex_shader(uint index [[vertex_id]], const d
     else result.uv.y += animation;
     result.color = float4(vertices[index].color) / 255.0;
     result.light = float2(vertices[index].light) / 255.0;
-    result.material = surface.material;
+    result.material = maage_shader_surface_material(surface.material_rotation);
+    result.rotation_face = maage_shader_surface_rotation(surface.material_rotation);
+    result.world_position = vertices[index].position;
     return result;
 }
 fragment float4 maage_mesh_fragment_shader(maage_fragment input [[stage_in]], texture2d<float> atlas [[texture(0)]], constant maage_uniforms &uniforms [[buffer(0)]]) {
     constexpr sampler pixels(coord::normalized, address::clamp_to_edge, filter::nearest, mip_filter::none);
-    float4 texel = atlas.sample(pixels, maage_shader_tile_uv(input.uv, input.tile));
+    if (input.material == float(MAAGE_MESH_MATERIAL_STARFIELD)) return maage_shader_fog(maage_shader_starfield(input.world_position, input.fog_position, uniforms.matrix, uniforms.parameters.x), input.fog_position, input.material, uniforms.fog, uniforms.fog_distance, uniforms.lighting);
+    float4 texel = atlas.sample(pixels, maage_shader_tile_uv(input.uv, input.tile, input.world_position, input.rotation_face));
     if (maage_shader_cutout(input.material, texel.a)) discard_fragment();
-    return maage_shader_fog(maage_shader_mesh_color(texel, input.color, input.light, input.material, uniforms.lighting, uniforms.parameters), input.fog_position, input.material, uniforms.fog, uniforms.fog_distance);
+    return maage_shader_fog(maage_shader_mesh_color(texel, input.color, input.light, input.material, uniforms.lighting, uniforms.parameters), input.fog_position, input.material, uniforms.fog, uniforms.fog_distance, uniforms.lighting);
 }
 
 struct maage_ui_vertex {
@@ -77,6 +83,8 @@ vertex maage_fragment maage_ui_vertex_shader(uint index [[vertex_id]], const dev
     result.material = 0;
     result.tile = float4(0);
     result.fog_position = float3(0);
+    result.world_position = float3(0);
+    result.rotation_face = 0;
     return result;
 }
 fragment float4 maage_ui_fragment_shader(maage_fragment input [[stage_in]], texture2d<float> atlas [[texture(0)]]) {
@@ -92,5 +100,7 @@ vertex maage_fragment maage_fullscreen_vertex_shader(uint index [[vertex_id]]) {
     result.material = 0;
     result.tile = float4(0);
     result.fog_position = float3(0);
+    result.world_position = float3(0);
+    result.rotation_face = 0;
     return result;
 }

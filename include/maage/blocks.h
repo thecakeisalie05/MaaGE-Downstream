@@ -47,6 +47,13 @@ enum {
     MAAGE_BLOCK_TINT_GRASS_LOCAL = 3
 };
 
+/* Texture rotation is presentation-only, opt-in per ordinary full cube face.
+ * Directional, layered, inset and fluid faces retain their authored orientation. */
+typedef enum maage_block_texture_rotation {
+    MAAGE_BLOCK_TEXTURE_ROTATION_FIXED = 0,
+    MAAGE_BLOCK_TEXTURE_ROTATION_RANDOM_90 = 1
+} maage_block_texture_rotation;
+
 typedef struct maage_block_face_definition {
     maage_texture_id texture_id;
     maage_texture_id overlay_texture, snow_texture;
@@ -63,6 +70,7 @@ typedef struct maage_block_face_definition {
     float flow_uv[4], flow_animation[3];
     int has_flow_texture;
     maage_texture_id flow_texture;
+    unsigned int texture_rotation; /* maage_block_texture_rotation */
 } maage_block_face_definition;
 
 /* Local voxel coordinates; selection and collision may differ. Empty shapes
@@ -126,11 +134,12 @@ typedef struct maage_block_definition {
     maage_block_id id;
     int solid;
     int opaque;
-    int falls;                   /* Eligible payload for the shared falling-entity mechanism. */
-    int material_solid;          /* Plant adjacency rule; independent of collision. */
-    unsigned int emitted_light;  /* 0..15; resolved during registration. */
-    unsigned int light_opacity;  /* 0..15; independent of face occlusion. */
-    int use_neighbor_brightness; /* Combined light uses up and four sides. */
+    int falls;                         /* Eligible payload for the shared falling-entity mechanism. */
+    int material_solid;                /* Plant adjacency rule; independent of collision. */
+    unsigned int emitted_light;        /* 0..15; resolved during registration. */
+    unsigned int light_opacity;        /* 0..15; independent of face occlusion. */
+    int use_neighbor_brightness;       /* Combined light uses up and four sides. */
+    unsigned long portal_presentation; /* Optional registered numeric Client effects profile; zero absent. */
     int selectable, replaceable;
     maage_block_geometry_id geometry_id; /* Registered geometry; resolved before finalization. */
     unsigned int mesh_shape;             /* Cached optimized primitive tag from the geometry registry. */
@@ -270,8 +279,6 @@ typedef struct maage_registry_bindings {
     maage_block_id block_air;
     maage_block_state_id state_air, state_boundary, state_ui_background;
     const void *generation_context;
-    maage_status (*generate)(struct maage_chunk *chunk, struct maage_world_seed seed, const maage_block_registry *blocks, const struct maage_biome_registry *biomes, const struct maage_generation_policy *policy, const struct maage_job_token *token, maage_status_trace *trace);
-    maage_status (*spawn)(struct maage_world_seed seed, const maage_block_registry *blocks, const struct maage_biome_registry *biomes, const struct maage_generation_policy *policy, double feet[3]);
 } maage_registry_bindings;
 maage_status maage_block_registry_bind(maage_block_registry *registry, const maage_registry_bindings *bindings);
 const maage_registry_bindings *maage_block_registry_bindings(const maage_block_registry *registry);

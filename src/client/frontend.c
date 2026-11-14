@@ -48,7 +48,7 @@ struct maage_client_frontend {
     size_t count;
     maage_client_options saved_options;
     const maage_instance *instance;
-    int busy;
+    int busy, io_pending;
 };
 /* Server owns final saving; the Client drops all owner references before this
  * worker joins the Server and releases its replica. Neither work item needs a
@@ -222,7 +222,7 @@ maage_status maage_client_frontend_run(maage_client_frontend *f, maage_window_sy
         matrix[i * 5] = 1;
     maage_client_ui_get_options(ui, &f->saved_options);
     maage_client_ui_front_begin(f->view);
-    result = maage_client_ui_open_root(ui, MAAGE_CLIENT_UI_TITLE);
+    result = maage_client_ui_open_root(ui, f->shutdown_active ? MAAGE_CLIENT_UI_SAVING : MAAGE_CLIENT_UI_TITLE);
     if (maage_status_failed(result)) return result;
     result = maage_window_capture_mouse(maage_client_ui_window(ui), 0);
     if (maage_status_failed(result)) return result;
@@ -282,7 +282,7 @@ maage_status maage_client_frontend_run(maage_client_frontend *f, maage_window_sy
         }
         /* Both queued button clicks and the original menu music need the
          * same audio service tick used during gameplay. */
-        if (audio) {
+        if (audio && !f->shutdown_active) {
             maage_client_ui_get_options(ui, &options);
             (void) maage_client_audio_service_apply_options(audio, &options);
             (void) maage_client_audio_service_update(audio, NULL, NULL, menu_listener, menu_forward, start, NULL);
@@ -290,10 +290,23 @@ maage_status maage_client_frontend_run(maage_client_frontend *f, maage_window_sy
         if (f->shutdown_active && maage_status_code(maage_jobs_poll(f->shutdown_jobs, &completion)) == MAAGE_STATUS_SUCCESS) {
             f->shutdown_active = 0;
             f->shutdown_unsafe = f->shutdown.server || f->shutdown.session || f->shutdown.visual;
-            if (f->shutdown_unsafe) maage_client_ui_front_error(f->view, "World cleanup incomplete; restart required.");
-            else if (maage_status_failed(completion.result)) maage_client_ui_front_error(f->view, "World shutdown failed; see logs/client.log");
+            if (maage_client_ui_current(ui) == MAAGE_CLIENT_UI_SAVING) {
+                result = maage_client_ui_open_root(ui, MAAGE_CLIENT_UI_TITLE);
+                if (maage_status_failed(result)) return result;
+            }
+            if (maage_status_failed(completion.result)) maage_client_ui_notify(ui, completion.result, start);
+            if (f->shutdown_unsafe) {
+                f->busy = f->io_pending = 0;
+                maage_client_ui_front_error(f->view, "World cleanup incomplete; restart required.");
+            } else if (f->io_pending) {
+                /* The confirmed UUID is already copied; the World lease has
+                 * now been released. Never race the final authoritative save. */
+                result = maage_jobs_submit(f->jobs, 0, front_io_run, &f->io, &job, trace);
+                if (maage_status_failed(result)) return result;
+                f->io_pending = 0;
+            } else if (maage_status_failed(completion.result)) maage_client_ui_front_error(f->view, "World shutdown failed; see logs/client.log");
         }
-        if (f->busy && maage_status_code(maage_jobs_poll(f->jobs, &completion)) == MAAGE_STATUS_SUCCESS) {
+        if (f->busy && !f->io_pending && maage_status_code(maage_jobs_poll(f->jobs, &completion)) == MAAGE_STATUS_SUCCESS) {
             f->busy = 0;
             if (maage_status_failed(completion.result)) {
                 maage_log_trace_status(MAAGE_LOG_WARNING, "maage.client.worlds", completion.result, &completion.trace, "World catalog operation failed: %s", f->io.error);
@@ -347,8 +360,11 @@ maage_status maage_client_frontend_run(maage_client_frontend *f, maage_window_sy
                 f->io.operation = request.action;
                 if (request.selected < f->count) strcpy(f->io.id, f->entries[request.selected].id);
                 strcpy(f->io.name, request.name);
-                result = maage_jobs_submit(f->jobs, 0, front_io_run, &f->io, &job, trace);
-                if (maage_status_failed(result)) return result;
+                if (f->shutdown_active && (request.action == 2 || request.action == 3)) f->io_pending = 1;
+                else {
+                    result = maage_jobs_submit(f->jobs, 0, front_io_run, &f->io, &job, trace);
+                    if (maage_status_failed(result)) return result;
+                }
                 f->busy = 1;
                 maage_client_ui_front_busy(f->view, 1);
             }
@@ -396,6 +412,7 @@ maage_status maage_client_frontend_leave_world(maage_client_frontend *f, maage_s
 }
 maage_status maage_client_frontend_destroy(maage_client_frontend *f) {
     maage_job_completion completion;
+    maage_job_id job;
     maage_status result;
     if (!f) return maage_status_make(MAAGE_STATUS_NOOP, 0, MAAGE_OPERATION_DESTROY, 0);
     /* If the application itself closes during a pending world save, preserve
@@ -408,6 +425,19 @@ maage_status maage_client_frontend_destroy(maage_client_frontend *f) {
         f->shutdown_active = 0;
     }
     if (f->shutdown.server || f->shutdown.session || f->shutdown.visual) return maage_status_make(MAAGE_STATUS_INVALID_STATE, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_DESTROY, 0);
+    /* A confirmed mutation remains owned even if the title window closes. */
+    if (f->io_pending) {
+        result = maage_jobs_submit(f->jobs, 0, front_io_run, &f->io, &job, NULL);
+        if (maage_status_failed(result)) return result;
+        f->io_pending = 0;
+    }
+    if (f->busy && (f->io.operation == 2 || f->io.operation == 3)) {
+        result = maage_jobs_wait(f->jobs);
+        if (maage_status_failed(result)) return result;
+        if (maage_status_code(maage_jobs_poll(f->jobs, &completion)) != MAAGE_STATUS_SUCCESS) return maage_status_make(MAAGE_STATUS_INVALID_STATE, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_STOP, 0);
+        f->busy = 0;
+        if (maage_status_failed(completion.result)) maage_log_trace_status(MAAGE_LOG_WARNING, "maage.client.worlds", completion.result, &completion.trace, "World catalog operation failed: %s", f->io.error);
+    }
     result = maage_jobs_destroy(f->shutdown_jobs, NULL);
     if (maage_status_failed(result)) return result;
     result = maage_jobs_destroy(f->jobs, NULL);
@@ -421,6 +451,9 @@ maage_status maage_client_frontend_destroy(maage_client_frontend *f) {
     return result;
 }
 
+void maage_client_frontend_loading_progress(maage_client_frontend *f, const char *label, const unsigned char *cells, unsigned int edge) {
+    if (f) maage_client_ui_front_loading(f->view, label, cells, edge);
+}
 maage_status maage_client_frontend_loading(maage_client_frontend *f, maage_status_trace *trace) {
     maage_window_state state;
     maage_client_ui_input input;
@@ -435,6 +468,11 @@ maage_status maage_client_frontend_loading(maage_client_frontend *f, maage_statu
     }
     result = maage_window_get_state(maage_client_ui_window(f->ui), &state);
     if (maage_status_failed(result)) return result;
+    result = maage_client_ui_set_window_state(f->ui, &state);
+    if (maage_status_failed(result)) return result;
+    result = maage_client_ui_set_safe_area(f->ui, &state.safe_area);
+    if (maage_status_failed(result)) return result;
+    maage_client_ui_notice_time(f->ui, maage_time_monotonic_seconds());
     memset(&input, 0, sizeof(input));
     result = maage_client_ui_update(f->ui, &input, state.framebuffer_width, state.framebuffer_height, state.width, state.height, &actions);
     if (maage_status_failed(result)) return result;

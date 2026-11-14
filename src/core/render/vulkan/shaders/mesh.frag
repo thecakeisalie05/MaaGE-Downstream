@@ -9,11 +9,17 @@ layout(location = 2) in vec2 maage_fragment_light;
 layout(location = 3) flat in float maage_fragment_material;
 layout(location = 4) in vec3 maage_fog_position;
 layout(location = 5) flat in vec4 maage_tile;
+layout(location = 6) in vec3 maage_world_position;
+layout(location = 7) flat in uint maage_rotation_face;
 layout(location = 0) out vec4 maage_result;
 
 void main()
 {
-    vec4 texel = texture(maage_atlas, maage_shader_tile_uv(maage_fragment_uv, maage_tile));
+    if (maage_fragment_material == float(MAAGE_MESH_MATERIAL_STARFIELD)) {
+        maage_result = maage_shader_fog(maage_shader_starfield(maage_world_position, maage_fog_position, maage.matrix, maage.parameters.x), maage_fog_position, maage_fragment_material, maage.fog, maage.fog_distance, maage.lighting);
+        return;
+    }
+    vec4 texel = texture(maage_atlas, maage_shader_tile_uv(maage_fragment_uv, maage_tile, maage_world_position, maage_rotation_face));
     if (maage_shader_cutout(maage_fragment_material, texel.a)) discard;
-    maage_result = maage_shader_fog(maage_shader_mesh_color(texel, maage_fragment_color, maage_fragment_light, maage_fragment_material, maage.lighting, maage.parameters), maage_fog_position, maage_fragment_material, maage.fog, maage.fog_distance);
+    maage_result = maage_shader_fog(maage_shader_mesh_color(texel, maage_fragment_color, maage_fragment_light, maage_fragment_material, maage.lighting, maage.parameters), maage_fog_position, maage_fragment_material, maage.fog, maage.fog_distance, maage.lighting);
 }

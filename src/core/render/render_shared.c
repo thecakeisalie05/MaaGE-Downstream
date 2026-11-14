@@ -179,7 +179,9 @@ maage_status maage_render_frame_plan_prepare(maage_renderer *renderer, const maa
     }
     if (plan->ordered_count > 1) qsort(renderer->ordered, plan->ordered_count, sizeof(*plan->ordered), maage_render_mesh_order);
     if (matrix) memcpy(plan->world.matrix, matrix, sizeof(plan->world.matrix));
-    plan->world.lighting[0] = renderer->sky_light;
+    /* Negative daylight encodes a constant floor without expanding the shared
+     * 128-byte push-constant ABI. It never changes numerical World light. */
+    plan->world.lighting[0] = renderer->ambient_light > 0 ? -renderer->ambient_light : renderer->sky_light;
     plan->world.parameters[0] = renderer->animation_tick;
     memcpy(plan->world.fog, renderer->fog, sizeof(plan->world.fog));
     memcpy(plan->world.fog_distance, renderer->fog_distance, sizeof(plan->world.fog_distance));
@@ -353,10 +355,15 @@ const maage_render_mesh *maage_render_frame_next_mesh(const maage_render_frame_p
     }
     return NULL;
 }
-void maage_render_draw_uniforms(const maage_render_frame_plan *plan, int foreground, const maage_render_mesh_cursor *cursor, maage_render_uniforms *uniforms) {
+void maage_render_draw_uniforms(const maage_render_frame_plan *plan, int foreground, const maage_render_mesh *mesh, const maage_render_mesh_cursor *cursor, maage_render_uniforms *uniforms) {
     unsigned int row, column, k;
     *uniforms = foreground ? plan->hand : plan->world;
-    if (!cursor->instance) return;
+    if (!cursor->instance) {
+        /* Direct world meshes have no light override. Reuse its unused sky
+         * component for extra fog; the 128-byte Vulkan ABI stays unchanged. */
+        if (!foreground) uniforms->lighting[1] = mesh->fog_blend;
+        return;
+    }
     for (column = 0; column < 4; ++column)
         for (row = 0; row < 4; ++row) {
             uniforms->matrix[column * 4 + row] = 0;
@@ -389,8 +396,10 @@ void maage_render_mesh_pack_span(const maage_mesh_preparation *prepared, size_t 
         if (part > bytes) part = bytes;
         memcpy(packed.position, source->position, sizeof(packed.position));
         memcpy(packed.uv, source->uv, sizeof(packed.uv));
-        for (channel = 0; channel < 4; ++channel) packed.color[channel] = maage_render_unit_channel(source->color[channel]);
-        for (channel = 0; channel < 2; ++channel) packed.light[channel] = maage_render_unit_channel(source->light[channel]);
+        for (channel = 0; channel < 4; ++channel)
+            packed.color[channel] = maage_render_unit_channel(source->color[channel]);
+        for (channel = 0; channel < 2; ++channel)
+            packed.light[channel] = maage_render_unit_channel(source->light[channel]);
         packed.padding[0] = packed.padding[1] = 0;
         packed.surface = prepared->surface_indices[vertex];
         memcpy(target, (const unsigned char *) &packed + start, part);
@@ -436,7 +445,7 @@ int maage_render_gpu_layout_supported(void) {
            offsetof(maage_render_gpu_mesh_vertex, light) == 24 &&
            offsetof(maage_render_gpu_mesh_vertex, surface) == 28 &&
            sizeof(maage_mesh_surface) == 32 &&
-           offsetof(maage_mesh_surface, material) == 12 &&
+           offsetof(maage_mesh_surface, material_rotation) == 12 &&
            offsetof(maage_mesh_surface, tile) == 16 &&
            sizeof(maage_render_ui_vertex) == MAAGE_RENDER_UI_VERTEX_BYTES &&
            sizeof(maage_render_ui_gpu_vertex) == MAAGE_RENDER_UI_GPU_VERTEX_BYTES &&

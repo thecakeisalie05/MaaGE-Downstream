@@ -238,6 +238,12 @@ maage_status maage_renderer_set_clear_color(maage_renderer *renderer, float red,
     renderer->clear[3] = alpha;
     return MAAGE_STATUS_VALUE(MAAGE_STATUS_SUCCESS, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
 }
+maage_status maage_renderer_set_ambient_light(maage_renderer *renderer, float level) {
+    if (!renderer || !(level >= 0 && level <= 1)) return MAAGE_STATUS_VALUE(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
+    if (level > 0 && !(renderer->capabilities.features & MAAGE_RENDER_CAP_SCENE)) return MAAGE_STATUS_VALUE(MAAGE_STATUS_NOT_IMPLEMENTED, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
+    renderer->ambient_light = level;
+    return MAAGE_STATUS_VALUE(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_SET, 0);
+}
 maage_status maage_renderer_set_scene(maage_renderer *renderer, float sky_light, const maage_render_ui_data *background, const maage_render_ui_data *overlay) {
     if (!renderer || !(sky_light >= 0 && sky_light <= 1)) return MAAGE_STATUS_VALUE(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
     if (!(renderer->capabilities.features & MAAGE_RENDER_CAP_SCENE) || !renderer->api->frame) return MAAGE_STATUS_VALUE(MAAGE_STATUS_NOT_IMPLEMENTED, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
@@ -532,6 +538,11 @@ maage_status maage_renderer_upload_mesh(maage_renderer *renderer, const maage_me
     result = maage_renderer_upload_geometry(renderer, data, texture, output, trace);
     maage_render_texture_destroy(texture);
     return MAAGE_STATUS_PROPAGATE(trace, result, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPLOAD);
+}
+maage_status maage_render_mesh_set_fog_blend(maage_render_mesh *mesh, float amount) {
+    if (!mesh || !(amount >= 0 && amount <= 1)) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
+    mesh->fog_blend = amount;
+    return maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_SET, 0);
 }
 maage_status maage_render_mesh_destroy(maage_render_mesh *mesh) {
     maage_render_mesh *source;

@@ -310,12 +310,12 @@ static void lod_cancel_pending(maage_distant_lod *lod) {
 }
 maage_distant_lod *maage_distant_lod_create(
     const char *instance_directory, const char world_id[37],
-    maage_world_seed seed, const maage_generation_policy *policy,
+    maage_dimension_id dimension, maage_world_seed seed, const maage_generation_policy *policy,
     const maage_block_registry *blocks, const maage_biome_registry *biomes) {
     maage_distant_lod *lod;
     char relative[128];
     if (!instance_directory || !world_id || !maage_storage_uuid_valid(world_id) ||
-        !blocks || !biomes || !policy) return NULL;
+        !dimension || !blocks || !biomes || !policy) return NULL;
     lod = (maage_distant_lod *) calloc(1, sizeof(*lod));
     if (!lod) return NULL;
     lod->tiles = (maage_distant_tile *) calloc(MAAGE_DISTANT_MAX_TILES, sizeof(*lod->tiles));
@@ -323,7 +323,8 @@ maage_distant_lod *maage_distant_lod_create(
     if (!lod->tiles || !lod->sampler) goto failed;
     lod->seed = seed; lod->policy = *policy;
     lod->blocks = blocks; lod->biomes = biomes;
-    snprintf(relative, sizeof(relative), "worlds/%s/lod-cache/v1", world_id);
+    snprintf(relative, sizeof(relative), "worlds/%s/lod-cache/v2/d%lu", world_id,
+        (unsigned long) dimension);
     if (maage_status_failed(maage_storage_join(lod->directory,
             sizeof(lod->directory), instance_directory, relative)) ||
         maage_status_failed(maage_storage_directories(lod->directory))) goto failed;

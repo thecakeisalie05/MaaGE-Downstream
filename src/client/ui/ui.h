@@ -22,7 +22,10 @@ typedef unsigned int maage_client_ui_screen_id;
 #define MAAGE_CLIENT_UI_SOUND_SETTINGS 11U
 #define MAAGE_CLIENT_UI_CRAFTING_TABLE 12U
 #define MAAGE_CLIENT_UI_CONTROLS 13U
-#define MAAGE_CLIENT_UI_LOD_SETTINGS 14U
+#define MAAGE_CLIENT_UI_CREDITS 14U
+#define MAAGE_CLIENT_UI_SAVING 15U
+#define MAAGE_CLIENT_ARRIVAL_OUTSIDE 4U
+#define MAAGE_CLIENT_UI_LOD_SETTINGS 16U
 #define MAAGE_CLIENT_UI_EXIT 1U
 #define MAAGE_CLIENT_UI_RESPAWN 2U
 #define MAAGE_CLIENT_UI_DEBUG_LINES 32
@@ -121,6 +124,7 @@ maage_status maage_client_ui_draw(maage_client_ui *ui, const maage_client_ui_deb
 double maage_client_ui_fov_radians(const maage_client_ui *ui);
 int maage_client_ui_max_fps(const maage_client_ui *ui);
 int maage_client_ui_render_distance(const maage_client_ui *ui);
+int maage_client_ui_chunk_fade_ms(const maage_client_ui *ui);
 int maage_client_ui_lod_enabled(const maage_client_ui *ui);
 int maage_client_ui_lod_distance(const maage_client_ui *ui);
 int maage_client_ui_lod_quality(const maage_client_ui *ui);

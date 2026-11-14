@@ -22,6 +22,7 @@ void maage_client_options_defaults(maage_client_options *options) {
     options->fov_degrees = 70;
     options->max_fps = 240;
     options->render_distance = MAAGE_CLIENT_RENDER_DISTANCE_DEFAULT;
+    options->chunk_fade_ms = MAAGE_CLIENT_CHUNK_FADE_DEFAULT_MS;
     options->lod_enabled = 0;
     options->lod_distance = MAAGE_CLIENT_LOD_DISTANCE_DEFAULT;
     options->lod_quality = 1;
@@ -37,7 +38,7 @@ void maage_client_options_defaults(maage_client_options *options) {
 int maage_client_options_equal(const maage_client_options *a, const maage_client_options *b) {
     int i;
     if (!a || !b || a->controls_revision != b->controls_revision || a->mouse_sensitivity != b->mouse_sensitivity || a->invert_mouse != b->invert_mouse || a->fov_degrees != b->fov_degrees ||
-        a->max_fps != b->max_fps || a->render_distance != b->render_distance || a->lod_enabled != b->lod_enabled || a->lod_distance != b->lod_distance || a->lod_quality != b->lod_quality || a->vsync != b->vsync || a->view_bobbing != b->view_bobbing ||
+        a->max_fps != b->max_fps || a->render_distance != b->render_distance || a->chunk_fade_ms != b->chunk_fade_ms || a->lod_enabled != b->lod_enabled || a->lod_distance != b->lod_distance || a->lod_quality != b->lod_quality || a->vsync != b->vsync || a->view_bobbing != b->view_bobbing ||
         a->gui_scale != b->gui_scale || a->leaves != b->leaves || a->biome_blend != b->biome_blend ||
         a->window_mode != b->window_mode || a->fullscreen_style != b->fullscreen_style)
         return 0;
@@ -116,6 +117,8 @@ static void maage_client_options_parse(maage_client_options *options, char *line
         options->max_fps = maage_client_options_integer(value, 0, 260, 10, &number) ? number : 0;
     } else if (!strcmp(key, "render_distance")) {
         if (maage_client_options_integer(value, 1, MAAGE_WORLD_MAX_RADIUS, 1, &number)) options->render_distance = number;
+    } else if (!strcmp(key, "chunk_fade_ms")) {
+        if (maage_client_options_integer(value, 0, MAAGE_CLIENT_CHUNK_FADE_MAX_MS, MAAGE_CLIENT_CHUNK_FADE_STEP_MS, &number)) options->chunk_fade_ms = number;
     } else if (!strcmp(key, "lod_enabled")) {
         if (!strcmp(value, "true")) options->lod_enabled = 1;
         else if (!strcmp(value, "false")) options->lod_enabled = 0;
@@ -221,7 +224,7 @@ maage_status maage_client_options_save(const maage_instance *instance, const maa
     int status, bus;
     if (!instance || !options || !bindings || options->mouse_sensitivity < 0 || options->mouse_sensitivity > 100 || (options->invert_mouse != 0 && options->invert_mouse != 1) || options->fov_degrees < 30 ||
         options->fov_degrees > 110 || (options->max_fps != 0 && (options->max_fps < 10 || options->max_fps > 260 || options->max_fps % 10)) ||
-        options->render_distance < 1 || options->render_distance > MAAGE_WORLD_MAX_RADIUS ||
+        options->render_distance < 1 || options->render_distance > MAAGE_WORLD_MAX_RADIUS || options->chunk_fade_ms < 0 || options->chunk_fade_ms > MAAGE_CLIENT_CHUNK_FADE_MAX_MS || options->chunk_fade_ms % MAAGE_CLIENT_CHUNK_FADE_STEP_MS ||
         (options->lod_enabled != 0 && options->lod_enabled != 1) || options->lod_distance < 1 || options->lod_distance > MAAGE_CLIENT_LOD_DISTANCE_MAX ||
         options->lod_quality < 0 || options->lod_quality > 2 ||
         (options->vsync != 0 && options->vsync != 1) ||
@@ -244,10 +247,10 @@ maage_status maage_client_options_save(const maage_instance *instance, const maa
     if (status < 0 || status == 2) return maage_status_make(MAAGE_STATUS_ACCESS_DENIED, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_SAVE, 0);
     file = maage_storage_open(temporary, "wb");
     if (!file) return maage_status_from_errno(errno, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_SAVE);
-    if (fprintf(file, "[video]\nfov_degrees=%d\nmax_fps=%d\nrender_distance=%d\nlod_enabled=%s\nlod_distance=%d\nlod_quality=%d\nvsync=%s\nview_bobbing=%s\ngui_scale=%d\nleaves=%s\nbiome_blend=%d\n"
+    if (fprintf(file, "[video]\nfov_degrees=%d\nmax_fps=%d\nrender_distance=%d\nchunk_fade_ms=%d\nlod_enabled=%s\nlod_distance=%d\nlod_quality=%d\nvsync=%s\nview_bobbing=%s\ngui_scale=%d\nleaves=%s\nbiome_blend=%d\n"
                       "window_mode=%s\nfullscreen_style=%s\n\n"
                       "[audio]\nmaster=%d\nblocks=%d\nplayer=%d\nambient=%d\nweather=%d\nmusic=%d\nui=%d\n",
-                options->fov_degrees, options->max_fps, options->render_distance,
+                options->fov_degrees, options->max_fps, options->render_distance, options->chunk_fade_ms,
                 options->lod_enabled ? "true" : "false", options->lod_distance, options->lod_quality,
                 options->vsync ? "true" : "false", options->view_bobbing ? "true" : "false", options->gui_scale, leaves[options->leaves], (int) options->biome_blend,
                 modes[options->window_mode], modes[options->fullscreen_style],

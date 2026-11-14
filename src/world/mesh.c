@@ -100,10 +100,11 @@ static unsigned char maage_mesh_sample(const maage_block_registry *registry, con
     return maage_chunk_presentation_light(sample, registry, x, y, z);
 }
 
-static void maage_mesh_lighting(const maage_block_registry *registry, const maage_chunk *chunk, const maage_chunk *neighbors[8], int x, int y, int z, unsigned int face, int outward, int smooth, unsigned int emission, maage_mesh_illumination *output) {
-    unsigned char base, a, b, diagonal, own;
+static void maage_mesh_lighting(const maage_block_registry *registry, const maage_chunk *chunk, const maage_chunk *neighbors[8], int x, int y, int z, unsigned int face, int outward, int neighbor_brightness, int smooth, unsigned int emission, maage_mesh_illumination *output) {
+    unsigned char base, a, b, diagonal, own, sample;
     int n[3], first[3], second[3], corner[3], axis, u, v, i, j;
-    int center_opaque, side_a, side_b, diagonal_opaque;
+    int center_opaque, side_a, side_b, diagonal_opaque, opaque;
+    unsigned int side, sky, block;
     float ao;
     own = maage_chunk_presentation_light(chunk, registry, x, y, z);
     n[0] = x;
@@ -113,6 +114,20 @@ static void maage_mesh_lighting(const maage_block_registry *registry, const maag
         for (i = 0; i < 3; ++i)
             n[i] += maage_face_neighbor[face][i];
     base = maage_mesh_sample(registry, chunk, neighbors, n[0], n[1], n[2], own, &center_opaque);
+    if (neighbor_brightness && !outward) {
+        /* Recessed faces can occupy a cell that blocks numerical light. Use
+         * exposed upper/side light independently per channel, while retaining
+         * the ordinary corner interpolation and AO around that cell. */
+        sky = base >> 4;
+        block = base & 15U;
+        for (side = 0; side < MAAGE_FACE_COUNT; ++side) {
+            if (side == MAAGE_FACE_NEGATIVE_Y) continue;
+            sample = maage_mesh_sample(registry, chunk, neighbors, x + maage_face_neighbor[side][0], y + maage_face_neighbor[side][1], z + maage_face_neighbor[side][2], own, &opaque);
+            if ((unsigned int) (sample >> 4) > sky) sky = sample >> 4;
+            if ((sample & 15U) > block) block = sample & 15U;
+        }
+        base = (unsigned char) ((sky << 4) | block);
+    }
     if (emission && (base & 15) < emission) base = (unsigned char) ((base & 240) | emission);
     axis = face / 2;
     u = (axis + 1) % 3;
@@ -317,6 +332,7 @@ static void maage_mesh_face(maage_mesh_vertex *vertices, unsigned int *indices, 
     for (corner = 0; corner < 4; ++corner) {
         vertex = &vertices[face_index * 4 + corner];
         memset(vertex->tile, 0, sizeof(vertex->tile));
+        vertex->rotation_face = 0;
         point = model == MAAGE_BLOCK_MESH_CROSS ? cross_corners[face][corner] : maage_face_corners[face][corner];
         for (component = 0; component < 3; ++component)
             local[component] = (float) (shape->minimum[component] + point[component] * (shape->maximum[component] - shape->minimum[component]));
@@ -495,7 +511,7 @@ static maage_status maage_mesh_custom_quad_write(maage_mesh_custom_work *work, c
         outward = 1;
         for (corner = 0; corner < 4; ++corner)
             if (quad->positions[corner][quad->face / 2] != (float) (quad->face & 1U)) outward = 0;
-        maage_mesh_lighting(work->blocks, work->chunk, work->neighbors, work->x, work->y, work->z, quad->face, outward || work->block->use_neighbor_brightness, !work->state->emitted_light && !work->state->fluid_kind, work->state->emitted_light, &illumination);
+        maage_mesh_lighting(work->blocks, work->chunk, work->neighbors, work->x, work->y, work->z, quad->face, outward, work->block->use_neighbor_brightness, !work->state->emitted_light && !work->state->fluid_kind, work->state->emitted_light, &illumination);
         for (layer = 0; layer < layers; ++layer) {
             uv = layer ? appearance->overlay_uv : appearance->uv;
             tint_mode = layer ? appearance->overlay_tint_mode : appearance->tint_mode;
@@ -750,7 +766,7 @@ static size_t maage_mesh_generate(const maage_block_registry *registry, const ma
                              * above its surface, outside the opaque cell.
                              * Geometric boundary checks still own face culling. */
                             if (state->fluid_kind) maage_mesh_fluid_lighting(registry, chunk, neighbors, x, y, z, face, state->emitted_light, &illumination);
-                            else maage_mesh_lighting(registry, chunk, neighbors, x, y, z, crossed ? MAAGE_FACE_POSITIVE_Y : face, boundary || (model == MAAGE_BLOCK_MESH_CUBE && current->use_neighbor_brightness && face == MAAGE_FACE_POSITIVE_Y), smooth, state->emitted_light, &illumination);
+                            else maage_mesh_lighting(registry, chunk, neighbors, x, y, z, crossed ? MAAGE_FACE_POSITIVE_Y : face, boundary || (model == MAAGE_BLOCK_MESH_CUBE && current->use_neighbor_brightness && face == MAAGE_FACE_POSITIVE_Y), 0, smooth, state->emitted_light, &illumination);
                             maage_mesh_face(vertices, indices, face_count, chunk->x * 16 + x, y, chunk->z * 16 + z, face, definition, uv, &face_shape, model, state->geometry_variant, log_axis, material, tint_mode ? colors[tint_mode] : neutral, tint_mode && blend >= MAAGE_BIOME_BLEND_SMOOTH_5, animation, state->fluid_kind ? fluid_heights : NULL, flow, &illumination);
                             mergeable = !state->fluid_kind && material == MAAGE_MESH_MATERIAL_OPAQUE;
                             /* Flat still-fluid tops share one repeated tile and
@@ -759,13 +775,16 @@ static size_t maage_mesh_generate(const maage_block_registry *registry, const ma
                             if (state->fluid_kind && material == MAAGE_MESH_MATERIAL_TRANSLUCENT && face == MAAGE_FACE_POSITIVE_Y && !flow && fluid_flow[0] == 0 && fluid_flow[1] == 0 && fluid_heights[0] == fluid_heights[1] && fluid_heights[0] == fluid_heights[2] && fluid_heights[0] == fluid_heights[3]) mergeable = 1;
                             if (!overlay && !reverse && mergeable && model == MAAGE_BLOCK_MESH_CUBE && log_axis < 0 && uv[2] > uv[0] && uv[3] > uv[1] && face_shape.minimum[0] == 0 && face_shape.minimum[1] == 0 && face_shape.minimum[2] == 0 && face_shape.maximum[0] == 1 && face_shape.maximum[1] == 1 && face_shape.maximum[2] == 1) {
                                 maage_mesh_vertex *quad = vertices + face_count * 4;
+                                /* Rotation uses repeated local UVs even with varying corner light.
+                                 * Only uniformly shaded faces enter the merge grid below. */
                                 for (corner = 1; corner < 4; ++corner)
                                     if (memcmp(quad[0].color, quad[corner].color, sizeof(quad[0].color)) || memcmp(quad[0].light, quad[corner].light, sizeof(quad[0].light))) break;
-                                if (corner == 4)
+                                if (corner == 4 || definition->texture_rotation)
                                     for (corner = 0; corner < 4; ++corner) {
                                         memcpy(quad[corner].tile, uv, sizeof(quad[corner].tile));
                                         quad[corner].uv[0] = quad[corner].uv[0] == uv[0] ? 0 : 1;
                                         quad[corner].uv[1] = quad[corner].uv[1] == uv[1] ? 0 : 1;
+                                        quad[corner].rotation_face = definition->texture_rotation ? face + 1U : 0;
                                     }
                             }
                             if (overlay) maage_mesh_face(vertices, indices, face_count + 1, chunk->x * 16 + x, y, chunk->z * 16 + z, face, definition, definition->overlay_uv, &face_shape, model, state->geometry_variant, -1, MAAGE_MESH_MATERIAL_CUTOUT, colors[definition->overlay_tint_mode], definition->overlay_tint_mode && blend >= MAAGE_BIOME_BLEND_SMOOTH_5, NULL, NULL, NULL, &illumination);
@@ -843,6 +862,12 @@ static maage_status maage_mesh_merge(maage_world_mesh *mesh, size_t *faces, cons
         memset(grid, 0, 6UL * MAAGE_SECTION_VOLUME * sizeof(*grid));
         for (face = first; face < cursor; ++face)
             if (mesh->owners[face].minimum <= mesh->owners[face].maximum && mesh->owners[face].minimum / MAAGE_SECTION_VOLUME == section && mesh->vertices[face * 4].tile[2] > mesh->vertices[face * 4].tile[0]) {
+                quad = mesh->vertices + face * 4;
+                if (quad[0].rotation_face) {
+                    for (corner = 1; corner < 4; ++corner)
+                        if (memcmp(quad[0].color, quad[corner].color, sizeof(quad[0].color)) || memcmp(quad[0].light, quad[corner].light, sizeof(quad[0].light))) break;
+                    if (corner != 4) continue;
+                }
                 direction = maage_mesh_direction(mesh, face);
                 grid[direction * MAAGE_SECTION_VOLUME + mesh->owners[face].minimum % MAAGE_SECTION_VOLUME] = (unsigned int) face + 1U;
                 point[0] = mesh->owners[face].minimum & 15U;
