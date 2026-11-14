@@ -176,6 +176,7 @@ try {
     Write-Host "Launching MaaGE with Client package: $clientExecutable"
 
     $env:MAAGE_PROFILE = '1'
+    $env:MAAGE_PREFER_VULKAN = '1'
     $revision = (& git rev-parse --short HEAD).Trim()
     if ($LASTEXITCODE -ne 0) { $revision = 'unknown' }
     $startedAt = Get-Date
