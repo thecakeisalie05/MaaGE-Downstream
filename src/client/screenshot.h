@@ -1,6 +1,7 @@
 #ifndef MAAGE_CLIENT_SCREENSHOT_H
 #define MAAGE_CLIENT_SCREENSHOT_H
 #include "maage/status.h"
+#include <stddef.h>
 /* Native window capture. The Windows adapter samples the desktop compositor,
  * so the game window must be visible and unobstructed. The session identifier
  * is a non-secret ASCII token supplied by the development launch workflow. */
