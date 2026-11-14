@@ -23,6 +23,7 @@
 #include "ui/splash.h"
 #include "debug.h"
 #include "profiler.h"
+#include "lod.h"
 #include "interaction.h"
 #include "prediction.h"
 #include "item_entities.h"
@@ -182,6 +183,7 @@ static maage_status maage_client_mesh_cache_grow(maage_client_mesh_cache *cache)
 }
 static void maage_client_mesh_cache_drop(maage_client_mesh_cache *cache, size_t index, maage_world *visual) {
     if (visual && cache->slots[index].used && !cache->slots[index].presented) (void) maage_world_mesh_prepared(visual, cache->slots[index].x, cache->slots[index].z, 0);
+    maage_client_lod_mesh_clear(&cache->slots[index].lod);
     maage_render_mesh_destroy(cache->slots[index].prepared);
     maage_render_mesh_destroy(cache->slots[index].prediction);
     maage_world_mesh_destroy(cache->slots[index].source);
@@ -731,6 +733,7 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     maage_session_command last_input;
     int has_last_input = 0;
     maage_client_mesh_cache cache;
+    maage_client_lod lod;
     maage_client_prediction prediction;
     unsigned long prediction_mesh_generation = 0;
     maage_client_mesh_activity mesh_activity;
@@ -813,6 +816,7 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     memset(&collision, 0, sizeof(collision));
     memset(&debug, 0, sizeof(debug));
     memset(&profiler, 0, sizeof(profiler));
+    memset(&lod, 0, sizeof(lod));
     memset(&outbox, 0, sizeof(outbox));
     outbox.diagnostics = maage_log_enabled("maage.client.latency", MAAGE_LOG_VERBOSE) && getenv("MAAGE_WORLD_DIAGNOSTICS") && !strcmp(getenv("MAAGE_WORLD_DIAGNOSTICS"), "1");
     memset(&latest, 0, sizeof(latest));
@@ -821,6 +825,8 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     maage_render_desc_init(&render_config);
     rendered = maage_render_desc_parse_args(argc, argv, &render_config);
     if (maage_status_code(rendered) != MAAGE_STATUS_SUCCESS) goto done;
+    maage_log_info("maage.client.render", "Requested renderer family: %d (0=auto, 2=vulkan, 3=opengl). Vulkan compiled=%d.",
+        (int) render_config.family, maage_render_backend_compiled(MAAGE_RENDER_VULKAN));
     operation = maage_client_world_options_parse(argc, argv, &options);
     if (maage_status_failed(operation)) {
         failure_message = "Invalid world, seed, worker, radius, or gameplay options.";
@@ -993,6 +999,8 @@ choose_world:
     }
     direct_world = 0;
     options.radius = video_options.render_distance;
+    if (video_options.lod_enabled && video_options.lod_distance > options.radius) options.radius = video_options.lod_distance;
+    maage_client_lod_clear(&lod);
     has_last_input = 0;
     memset(&outbox, 0, sizeof(outbox));
     outbox.diagnostics = maage_log_enabled("maage.client.latency", MAAGE_LOG_VERBOSE) && getenv("MAAGE_WORLD_DIAGNOSTICS") && !strcmp(getenv("MAAGE_WORLD_DIAGNOSTICS"), "1");
@@ -1141,6 +1149,7 @@ choose_world:
         if (raw_elapsed < 0.0) raw_elapsed = 0.0;
         if (!retired_in_shutdown && retired_resources.view && !maage_world_presentation_borrowed(visual_world, maage_content_view_blocks(retired_resources.view))) maage_client_resources_destroy(&retired_resources);
         if (input.focused && input.keys[MAAGE_INPUT_KEY_F3] && input.pressed[MAAGE_INPUT_KEY_T]) {
+            maage_client_lod_cancel(&lod);
             operation = maage_client_reload_resources(system, directory, content, renderer, ui, visual_world, &resources, &retired_resources, &atlas, &environment_view, &item_entities, &cache, &interaction, &first_person, &player_view, &prediction, trace);
             blocks = maage_content_view_blocks(resources.view);
             maage_client_ui_notify(ui, operation, now);
@@ -1197,10 +1206,17 @@ choose_world:
             }
         }
         video_options.render_distance = maage_client_ui_render_distance(ui);
-        if (options.radius != video_options.render_distance) {
-            memory_reclaim_after = video_options.render_distance < options.radius ? now + 3.0 : -1.0;
-            options.radius = video_options.render_distance;
+        video_options.lod_enabled = maage_client_ui_lod_enabled(ui);
+        video_options.lod_distance = maage_client_ui_lod_distance(ui);
+        video_options.lod_quality = maage_client_ui_lod_quality(ui);
+        {
+            int requested_radius = video_options.render_distance;
+            if (video_options.lod_enabled && video_options.lod_distance > requested_radius) requested_radius = video_options.lod_distance;
+            if (options.radius != requested_radius) {
+            memory_reclaim_after = requested_radius < options.radius ? now + 3.0 : -1.0;
+            options.radius = requested_radius;
             view_sent = 0;
+            }
         }
         if (!changing_mode && !was_changing_mode && ((was_focused && (!input.focused || input.focus_lost)) || (was_active && !input.captured))) {
             if (!maage_client_ui_modal(ui)) (void) maage_client_ui_open(ui, MAAGE_CLIENT_UI_PAUSE);
@@ -1385,6 +1401,7 @@ choose_world:
              incoming.world_epoch != latest.world_epoch ||
              incoming.sequence > latest.sequence)) {
             if (incoming.session_epoch != latest.session_epoch || incoming.world_epoch != latest.world_epoch) {
+                maage_client_lod_clear(&lod);
                 (void) maage_client_mesh_cache_clear(&cache, visual_world);
                 previous = incoming;
                 received_time = now;
@@ -1668,6 +1685,19 @@ choose_world:
             rendered = maage_renderer_resize(renderer);
             if (maage_status_failed(rendered)) goto done;
         }
+        if (video_options.lod_enabled && cache.capacity) {
+            /* Generate at most one LOD candidate/update step each frame.
+             * Far columns retain exact mesh fallback until their coarse GPU
+             * replacement is ready; this avoids holes during streaming. */
+            operation = maage_client_lod_step(&lod, visual_world, renderer, atlas, cache.slots, cache.capacity,
+                cx, cz, video_options.render_distance, options.radius, video_options.lod_quality);
+            if (maage_status_failed(operation)) {
+                maage_log_status(MAAGE_LOG_WARNING, "maage.client.lod", operation, "LOD build/upload failed; keeping full-resolution fallback.");
+                maage_client_lod_cancel(&lod);
+            }
+        } else {
+            maage_client_lod_cancel(&lod);
+        }
         draw_count = resident_count = first_count = 0;
         memset(&mesh_stats, 0, sizeof(mesh_stats));
         for (slot_index = 0; slot_index < cache.capacity; ++slot_index) {
@@ -1687,7 +1717,13 @@ choose_world:
                     ++first_count;
                 }
                 if (cache.slots[slot_index].filtered || cache.slots[slot_index].mesh) {
-                    if (cache.slots[slot_index].filtered) {
+                    int lod_distance = abs(cache.slots[slot_index].x - cx);
+                    if (abs(cache.slots[slot_index].z - cz) > lod_distance) lod_distance = abs(cache.slots[slot_index].z - cz);
+                    if (video_options.lod_enabled && lod_distance > video_options.render_distance &&
+                        cache.slots[slot_index].lod.gpu && cache.slots[slot_index].lod.revision == cache.slots[slot_index].visual_revision &&
+                        cache.slots[slot_index].lod.quality == video_options.lod_quality) {
+                        cache.draws[draw_count++] = cache.slots[slot_index].lod.gpu;
+                    } else if (cache.slots[slot_index].filtered) {
                         if (cache.slots[slot_index].prediction) cache.draws[draw_count++] = cache.slots[slot_index].prediction;
                     } else
                         cache.draws[draw_count++] = cache.slots[slot_index].mesh;
@@ -1867,6 +1903,7 @@ window_failed:
     outcome = MAAGE_STATUS_PROPAGATE(trace, result, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_UPDATE);
     failure_message = "Native window/input cannot continue.";
 done:
+    maage_client_lod_clear(&lod);
     maage_client_profiler_close(&profiler);
     /* Capture the failing occurrence before saving options overwrites operation.
      * An explicitly retained Server/window/clock failure remains authoritative. */
