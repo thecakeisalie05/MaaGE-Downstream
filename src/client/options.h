@@ -42,7 +42,7 @@ typedef enum maage_client_audio_bus {
 #define MAAGE_CLIENT_AUDIO_KEY_UI "ui"
 #define MAAGE_CLIENT_RENDER_DISTANCE_DEFAULT 8
 #define MAAGE_CLIENT_LOD_DISTANCE_DEFAULT 16
-#define MAAGE_CLIENT_LOD_DISTANCE_MAX 48
+#define MAAGE_CLIENT_LOD_DISTANCE_MAX 16
 #define MAAGE_CLIENT_RENDER_DISTANCE_SLIDER_MAX 32
 typedef struct maage_client_options {
     maage_controls *controls; /* Borrowed on owner thread; saves serialize before worker handoff. */
