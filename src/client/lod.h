@@ -2,6 +2,7 @@
 #define MAAGE_CLIENT_LOD_H
 #include "maage/render.h"
 #include "maage/world.h"
+#include "maage/biome.h"
 #include <stddef.h>
 
 /* Presentation-only decimated surface meshes for resident World columns.
@@ -43,7 +44,7 @@ void maage_client_lod_mesh_clear(maage_client_lod_mesh *mesh);
  * Caller supplies stable slot identities for the duration of this call.
  * Failures preserve the full-resolution fallback and cancel the candidate. */
 maage_status maage_client_lod_step(maage_client_lod *lod, maage_world *world,
-    maage_renderer *renderer, maage_render_texture *atlas,
+    maage_renderer *renderer, maage_render_texture *atlas, const maage_biome_registry *biomes,
     maage_client_chunk_mesh *slots, size_t count,
     int center_x, int center_z, int detail_radius, int far_radius, int quality);
 #endif
