@@ -25,9 +25,9 @@ static maage_lod_surface lod_sample(const maage_world *world, const maage_block_
     const maage_biome_registry *biomes, int x, int z) {
     maage_lod_surface surface;
     maage_world_observation observation;
-    const maage_block_state_definition *state, *fallback_state = NULL;
+    const maage_block_state_definition *state;
     const maage_block_definition *block;
-    int y, top, fallback_height = 0;
+    int y, top;
     memset(&surface, 0, sizeof(surface));
     if (!maage_world_observe(world, x, 0, z, &observation)) return surface;
     surface.present = 1;
@@ -48,19 +48,12 @@ static maage_lod_surface lod_sample(const maage_world *world, const maage_block_
             continue;
         }
         if (!block->solid || block->foliage || block->mesh_shape != MAAGE_BLOCK_MESH_CUBE) continue;
-        if (!fallback_state) {
-            fallback_state = state;
-            fallback_height = y + 1;
-        }
-        if (surface.biome && (state->id == surface.biome->surface || state->id == surface.biome->filler)) {
-            surface.ground_state = state;
-            surface.ground = y + 1;
-            break;
-        }
-    }
-    if (!surface.ground_state) {
-        surface.ground_state = fallback_state;
-        surface.ground = fallback_height;
+        /* The first exposed solid block defines the visible surface.
+         * Searching deeper for a biome's filler block incorrectly turns
+         * natural stone or gravel mountains into dirt terraces. */
+        surface.ground_state = state;
+        surface.ground = y + 1;
+        break;
     }
     if (surface.water <= surface.ground) {
         surface.water_state = NULL;
