@@ -1,7 +1,7 @@
 # Convert little-endian SPIR-V bytes into native C word literals. No compiler,
 # runtime file lookup or host-endianness assumption is needed by the executable.
 file(WRITE "${MAAGE_VULKAN_HEADER}" "/* Generated SPIR-V; do not edit. */\n#ifndef MAAGE_VULKAN_SHADERS_H\n#define MAAGE_VULKAN_SHADERS_H\n#include <stdint.h>\n")
-foreach(MAAGE_SHADER mesh_vert mesh_frag ui_vert ui_frag fullscreen_vert blur_frag)
+foreach(MAAGE_SHADER mesh_vert mesh_frag ui_vert ui_frag fullscreen_vert blur_frag effects_mesh_vert effects_mesh_frag shadow_vert shadow_frag sky_frag scatter_frag effects_post_frag)
     file(READ "${MAAGE_VULKAN_DIRECTORY}/${MAAGE_SHADER}.spv" MAAGE_SHADER_HEX HEX)
     string(LENGTH "${MAAGE_SHADER_HEX}" MAAGE_SHADER_LENGTH)
     math(EXPR MAAGE_SHADER_REMAINDER "${MAAGE_SHADER_LENGTH} % 8")

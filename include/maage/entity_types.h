@@ -60,6 +60,8 @@ typedef struct maage_entity_type_definition {
     unsigned int classification, flags, behaviors;
     double width, height, eye_height;
     unsigned int health;
+    unsigned int emitted_light;
+    float emission_color[3]; /* Presentation-only emissive source; zero emitted_light disables. */
     double panic_speed; /* Absolute steering target in blocks/tick; zero uses ordinary movement speed. */
     double speed, attack_damage, attack_range, follow_range, jump_velocity, gravity, fall_speed_limit;
     unsigned int attack_cooldown, invulnerability_ticks, fuse_ticks;

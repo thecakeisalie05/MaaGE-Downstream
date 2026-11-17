@@ -16,5 +16,5 @@ maage_status maage_client_environment_destroy(maage_client_environment *presenta
  * camera, independently of authoritative breathing. No allocation, synchronization,
  * resource acquisition or I/O. */
 /* radius retains near-fluid lighting rules; scene_radius drives distant fog. */
-maage_status maage_client_environment_update(maage_client_environment *presentation, maage_renderer *renderer, const maage_session_snapshot *snapshot, float width, float height, const float view_projection[16], const maage_world *visual, const double camera[3], double yaw, double pitch, int first_person, int radius, int scene_radius);
+maage_status maage_client_environment_update(maage_client_environment *presentation, maage_renderer *renderer, const maage_session_snapshot *snapshot, float width, float height, const float view_projection[16], const maage_world *visual, const double camera[3], double yaw, double pitch, int first_person, int radius, int scene_radius, int shader_underwater);
 #endif

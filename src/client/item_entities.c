@@ -1,4 +1,5 @@
 #include "item_entities.h"
+#include "shader_scene.h"
 #include "models.h"
 #include "particles.h"
 #include "player_model.h"
@@ -817,4 +818,32 @@ maage_status maage_client_item_entities_destroy(maage_client_item_entities *view
     free(view->next_poses);
     free(view);
     return outcome;
+}
+
+void maage_client_item_entities_lights(const maage_client_item_entities *view, maage_render_light *lights, size_t *count, size_t capacity, const double camera[3], double now) {
+    size_t i;
+    unsigned int axis;
+    double alpha;
+    if (!view) return;
+    alpha = (now - view->received) / 0.05;
+    if (alpha < 0) alpha = 0;
+    if (alpha > 1) alpha = 1;
+    maage_client_particles_lights(view->particles, lights, count, capacity, camera);
+    for (i = 0; i < view->current.count; ++i) {
+        const maage_entity_view *entity = &view->current.entities[i];
+        const maage_entity_type_definition *type = maage_entity_type_get(view->types, entity->registered_type);
+        double position[3];
+        for (axis = 0; axis < 3; ++axis)
+            position[axis] = entity->previous[axis] + (entity->position[axis] - entity->previous[axis]) * alpha;
+        if (entity->type == MAAGE_ENTITY_ITEM) {
+            const maage_item_definition *item = maage_item_registry_get(view->items, entity->payload.item.item_id);
+            if (item) maage_client_shader_light_state(lights, count, capacity, camera, position, view->blocks, maage_client_item_icon_state(view->blocks, item, entity->payload.item.variant));
+        } else if (entity->type == MAAGE_ENTITY_FALLING_BLOCK) maage_client_shader_light_state(lights, count, capacity, camera, position, view->blocks, maage_block_registry_state(view->blocks, entity->payload.falling.state));
+        if (type && type->emitted_light) maage_client_shader_light_offer(lights, count, capacity, camera, position, type->emission_color, type->emitted_light / 15.0f * 3, (float) type->emitted_light);
+        if (entity->type == MAAGE_ENTITY_LIVING && (entity->payload.living.flags & MAAGE_ENTITY_STATE_BURNING)) {
+            static const float fire[3] = {1, 0.3f, 0.05f};
+            position[1] += type ? type->height * 0.5 : 0.5;
+            maage_client_shader_light_offer(lights, count, capacity, camera, position, fire, 2, 10);
+        }
+    }
 }

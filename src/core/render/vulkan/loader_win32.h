@@ -17,6 +17,7 @@
     MAAGE_VULKAN_FUNCTION(vkCmdBindPipeline)                         \
     MAAGE_VULKAN_FUNCTION(vkCmdBindVertexBuffers)                    \
     MAAGE_VULKAN_FUNCTION(vkCmdClearAttachments)                     \
+    MAAGE_VULKAN_FUNCTION(vkCmdClearDepthStencilImage)                \
     MAAGE_VULKAN_FUNCTION(vkCmdClearColorImage)                      \
     MAAGE_VULKAN_FUNCTION(vkCmdCopyBuffer)                           \
     MAAGE_VULKAN_FUNCTION(vkCmdCopyBufferToImage)                    \
@@ -145,6 +146,7 @@ static maage_status maage_vulkan_load_win32(maage_renderer *renderer, HMODULE *l
 #define vkCmdBindPipeline native->dispatch.vkCmdBindPipeline
 #define vkCmdBindVertexBuffers native->dispatch.vkCmdBindVertexBuffers
 #define vkCmdClearAttachments native->dispatch.vkCmdClearAttachments
+#define vkCmdClearDepthStencilImage native->dispatch.vkCmdClearDepthStencilImage
 #define vkCmdClearColorImage native->dispatch.vkCmdClearColorImage
 #define vkCmdCopyBuffer native->dispatch.vkCmdCopyBuffer
 #define vkCmdCopyBufferToImage native->dispatch.vkCmdCopyBufferToImage

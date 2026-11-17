@@ -145,11 +145,11 @@ const maage_client_ui_debug *maage_client_debug_collect(maage_client_debug *debu
         {
             maage_distant_lod_stats lod_stats;
             maage_render_capabilities capabilities;
-            static const char *const quality[] = {"Performance", "Balanced", "Cinematic"};
+            static const char *const quality[] = {"Performance", "Balanced", "Cinematic", "Custom"};
             maage_distant_lod_get_stats(distant, &lod_stats);
             maage_renderer_get_capabilities(renderer, &capabilities);
             sprintf(debug->lod, "LOD %s: %u tiles | %u jobs | %u upload | %.0f MiB est%s", options->lod_enabled && distant && snapshot->dimension == maage_dimension_primary(dimensions) ? "ON" : "OFF", lod_stats.resident, lod_stats.active, lod_stats.publication_backlog, (double) lod_stats.gpu_bytes_estimate / 1048576.0, lod_stats.budget_limited ? " (budget)" : "");
-            sprintf(debug->shaders, "Shaders: %s | %s | %d%%", capabilities.features & MAAGE_RENDER_CAP_NATIVE_SHADERS ? (options->shaders_enabled ? (capabilities.features & MAAGE_RENDER_CAP_NATIVE_HDR ? "HDR filmic" : "SDR") : "OFF") : "Unavailable", quality[options->shader_quality], options->shader_exposure);
+            sprintf(debug->shaders, "Shaders: %s | %s | %d%%%s", capabilities.features & MAAGE_RENDER_CAP_NATIVE_SHADERS ? (options->shaders_enabled ? (capabilities.features & MAAGE_RENDER_CAP_NATIVE_HDR ? "HDR filmic" : "SDR") : "OFF") : "Unavailable", quality[options->shader_quality], options->shader_exposure, capabilities.features & MAAGE_RENDER_CAP_WORLD_EFFECTS ? " | Effects V1" : " | grade only");
         }
         debug->measurement_after = now + 0.25;
     }

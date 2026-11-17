@@ -25,6 +25,7 @@
 #include "profiler.h"
 #include "lod.h"
 #include "distant_lod.h"
+#include "shader_scene.h"
 #include "screenshot.h"
 #include "interaction.h"
 #include "prediction.h"
@@ -826,6 +827,7 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     maage_client_item_entities *item_entities = NULL;
     maage_client_debug debug;
     maage_client_profiler profiler;
+    maage_client_shader_scene shader_scene;
     maage_client_profile_marks profile_marks;
     char profile_logs[MAAGE_PATH_CAPACITY];
     char screenshot_dir[MAAGE_PATH_CAPACITY], screenshot_file[MAAGE_PATH_CAPACITY];
@@ -866,6 +868,9 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     float matrix[16];
     double camera_eye[3], camera_yaw, camera_pitch, camera_distance;
     size_t draw_count, resident_count, slot_index, first_count;
+    const maage_render_mesh **shadow_casters = NULL;
+    size_t shadow_capacity = 0, shadow_count = 0;
+    int collect_shadows = 0;
     int drop_latched = 0, drop_stack = 0;
     unsigned int drop_slot = 0;
     int valid_snapshot = 0, connected = 0, ok = 0, options_ready = 0, server_started = 0, i, axis;
@@ -898,6 +903,7 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     memset(&profiler, 0, sizeof(profiler));
     screenshot_dir[0] = 0;
     memset(&lod, 0, sizeof(lod));
+    memset(&shader_scene, 0, sizeof(shader_scene));
     memset(&outbox, 0, sizeof(outbox));
     outbox.diagnostics = maage_log_enabled("maage.client.latency", MAAGE_LOG_VERBOSE) && getenv("MAAGE_WORLD_DIAGNOSTICS") && !strcmp(getenv("MAAGE_WORLD_DIAGNOSTICS"), "1");
     memset(&latest, 0, sizeof(latest));
@@ -1341,7 +1347,7 @@ choose_world:
         {
             maage_render_capabilities capabilities;
             maage_renderer_get_capabilities(renderer, &capabilities);
-            operation = maage_renderer_set_native_shaders(renderer, video_options.shaders_enabled && (capabilities.features & MAAGE_RENDER_CAP_NATIVE_SHADERS) != 0, video_options.shader_quality, video_options.shader_exposure * 0.01f);
+            operation = maage_renderer_set_native_shaders(renderer, video_options.shaders_enabled && (capabilities.features & MAAGE_RENDER_CAP_NATIVE_SHADERS) != 0, video_options.shader_quality == 3 ? 1 : video_options.shader_quality, video_options.shader_exposure * 0.01f);
             if (maage_status_failed(operation)) goto done;
         }
         video_options.render_distance = maage_client_ui_render_distance(ui);
@@ -1894,6 +1900,22 @@ choose_world:
             maage_client_camera(matrix, camera_eye, camera_yaw, camera_pitch, (double) state.framebuffer_width / state.framebuffer_height, scene_radius, effective_fov, camera_effects.matrix, camera_mode == MAAGE_CAMERA_FIRST);
         }
         draw_count = resident_count = first_count = 0;
+        shadow_count = 0;
+        {
+            maage_render_capabilities caps;
+            maage_renderer_get_capabilities(renderer, &caps);
+            collect_shadows = video_options.shaders_enabled && video_options.shader_effects.shadows && (caps.features & MAAGE_RENDER_CAP_WORLD_EFFECTS);
+            if (collect_shadows && shadow_capacity < cache.capacity + cache.distant_capacity + 2) {
+                size_t capacity = cache.capacity + cache.distant_capacity + 2;
+                const maage_render_mesh **grown = (const maage_render_mesh **) realloc(shadow_casters, capacity * sizeof(*grown));
+                if (!grown) {
+                    operation = maage_status_make(MAAGE_STATUS_ALLOCATION_FAILED, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_UPDATE, 0);
+                    goto done;
+                }
+                shadow_casters = grown;
+                shadow_capacity = capacity;
+            }
+        }
         if (loading_terrain) {
             /* A changed render distance may grow the borrowed UI buffer.
              * Clear before reallocating, then publish the new map below. */
@@ -1948,7 +1970,7 @@ choose_world:
                             fog_blend = (float) (1.0 - progress * progress * (3.0 - 2.0 * progress));
                         }
                     }
-                    if (state.framebuffer_width > 0 && state.framebuffer_height > 0 && chunk->vertices && !maage_client_mesh_visible(chunk, matrix)) continue;
+                    if (!collect_shadows && state.framebuffer_width > 0 && state.framebuffer_height > 0 && chunk->vertices && !maage_client_mesh_visible(chunk, matrix)) continue;
                     /* When a distant tile has uploaded, don't also draw its
                      * resident exact chunk; preserve filtered prediction. */
                     if (mesh && !chunk->filtered && distant_lod && video_options.lod_enabled && latest.dimension == maage_dimension_primary(maage_content_dimensions(content))) {
@@ -1965,6 +1987,8 @@ choose_world:
                         maage_distant_lod_suppress(distant_lod, chunk->x, chunk->z);
                         operation = maage_render_mesh_set_fog_blend(mesh, fog_blend);
                         if (maage_status_failed(operation)) goto done;
+                        if (collect_shadows) shadow_casters[shadow_count++] = mesh;
+                        if (state.framebuffer_width > 0 && state.framebuffer_height > 0 && chunk->vertices && !maage_client_mesh_visible(chunk, matrix)) continue;
                         cache.draws[draw_count++] = mesh;
                     }
                 }
@@ -1979,6 +2003,9 @@ choose_world:
             draw_count += maage_distant_lod_append(distant_lod, cache.draws + draw_count,
                                                    cache.capacity + cache.distant_capacity + 2 - draw_count,
                                                    matrix);
+        if (collect_shadows && video_options.lod_enabled && distant_lod && latest.dimension == maage_dimension_primary(maage_content_dimensions(content))) shadow_count += maage_distant_lod_append(distant_lod, shadow_casters + shadow_count, shadow_capacity - shadow_count, NULL);
+        operation = maage_renderer_set_shadow_casters(renderer, collect_shadows ? shadow_casters : NULL, shadow_count);
+        if (maage_status_failed(operation)) goto done;
         mesh_activity.status.gpu_resident = resident_count;
         mesh_activity.status.ready_waiting_estimate = latest.world_stats.ready > resident_count ? latest.world_stats.ready - resident_count : 0;
         if (prediction.reveal) {
@@ -2035,11 +2062,13 @@ choose_world:
             rendered = maage_client_player_view_update(&player_view, renderer, atlas, &resources, items, item_entities, &previous, &visual_snapshot, alpha, eye, render_yaw, render_pitch, raw_elapsed, swing_progress, &food_animation, camera_mode != MAAGE_CAMERA_FIRST, camera_distance, trace);
             if (maage_status_failed(rendered)) goto done;
             if (maage_status_is_warning(rendered)) maage_client_ui_notify(ui, rendered, now);
-            rendered = maage_client_environment_update(environment_view, renderer, &latest, maage_client_ui_width(ui), maage_client_ui_height(ui), matrix, visual_world, camera_eye, camera_yaw, camera_pitch, camera_mode == MAAGE_CAMERA_FIRST, options.radius, scene_radius);
-            if (maage_status_failed(rendered)) goto done;
             rendered = maage_client_item_entities_update(item_entities, session, visual_world, &visual_snapshot, alpha, eye, now, player_view.draws, player_view.count, cache.slots, cache.capacity, trace);
             if (maage_status_failed(rendered)) goto done;
             if (maage_status_is_warning(rendered)) maage_client_ui_notify(ui, rendered, now);
+            operation = maage_client_shader_scene_update(&shader_scene, renderer, &video_options.shader_effects, video_options.shaders_enabled, &latest, visual_world, items, item_entities, camera_eye, now, raw_elapsed, (unsigned int) selected_hotbar);
+            if (maage_status_failed(operation)) goto done;
+            rendered = maage_client_environment_update(environment_view, renderer, &latest, maage_client_ui_width(ui), maage_client_ui_height(ui), matrix, visual_world, camera_eye, camera_yaw, camera_pitch, camera_mode == MAAGE_CAMERA_FIRST, options.radius, scene_radius, video_options.shaders_enabled && video_options.shader_effects.underwater && shader_scene.supported);
+            if (maage_status_failed(rendered)) goto done;
             profile_marks.draw_begin = profiler.active ? maage_time_monotonic_seconds() : 0;
             rendered = maage_renderer_draw_frame(renderer, cache.draws, draw_count, matrix, ui_draw, trace);
             if (maage_status_failed(rendered)) goto done;
@@ -2119,6 +2148,9 @@ choose_world:
         profiler.shaders_enabled = video_options.shaders_enabled;
         profiler.shader_quality = video_options.shader_quality;
         profiler.shader_exposure = video_options.shader_exposure;
+        profiler.effects = video_options.shader_effects;
+        profiler.shader_lights = (unsigned int) shader_scene.count;
+        profiler.shader_effects_supported = shader_scene.supported;
         maage_client_profiler_record(&profiler, &profile_marks, raw_elapsed, latest.tick, latest.world_stats.loaded,
             latest.world_stats.pending, latest.world_stats.running_jobs + visual_stats.running_jobs,
             mesh_activity.status.uploaded_this_frame, mesh_activity.status.budget_ms,
@@ -2213,6 +2245,8 @@ done:
     else distant_lod = NULL;
     maage_client_lod_clear(&lod);
     maage_client_profiler_close(&profiler);
+    maage_client_shader_scene_destroy(&shader_scene);
+    free(shadow_casters);
     /* Capture the failing occurrence before saving options overwrites operation.
      * An explicitly retained Server/window/clock failure remains authoritative. */
     if (splash.close_requested) ok = 1;

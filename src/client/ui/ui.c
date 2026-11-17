@@ -123,6 +123,7 @@ maage_status maage_client_ui_create(maage_renderer *renderer, maage_window *wind
     ui->lod_distance = MAAGE_CLIENT_LOD_DISTANCE_DEFAULT;
     ui->shaders_enabled = 0;
     ui->shader_quality = 1;
+    maage_shader_settings_preset(&ui->shader_effects, 1);
     ui->shader_exposure = 100;
     ui->lod_quality = 1;
     ui->render_distance_max = MAAGE_CLIENT_RENDER_DISTANCE_SLIDER_MAX;
@@ -383,6 +384,7 @@ maage_status maage_client_ui_apply_options(maage_client_ui *ui, const maage_clie
     ui->fps_step = options->max_fps ? options->max_fps / 10 - 1 : 26;
     ui->render_distance = options->render_distance;
     ui->chunk_fade_ms = options->chunk_fade_ms >= 0 && options->chunk_fade_ms <= MAAGE_CLIENT_CHUNK_FADE_MAX_MS && !(options->chunk_fade_ms % MAAGE_CLIENT_CHUNK_FADE_STEP_MS) ? options->chunk_fade_ms : MAAGE_CLIENT_CHUNK_FADE_DEFAULT_MS;
+    ui->shader_effects = options->shader_effects;
     ui->shaders_enabled = options->shaders_enabled;
     ui->shader_quality = options->shader_quality;
     ui->shader_exposure = options->shader_exposure;
@@ -430,6 +432,7 @@ void maage_client_ui_get_options(const maage_client_ui *ui, maage_client_options
     options->max_fps = ui->fps_step == 26 ? 0 : (ui->fps_step + 1) * 10;
     options->render_distance = ui->render_distance;
     options->chunk_fade_ms = ui->chunk_fade_ms;
+    options->shader_effects = ui->shader_effects;
     options->shaders_enabled = ui->shaders_enabled;
     options->shader_quality = ui->shader_quality;
     options->shader_exposure = ui->shader_exposure;
@@ -453,7 +456,7 @@ void maage_client_ui_get_options(const maage_client_ui *ui, maage_client_options
 
 int maage_client_ui_options_visible(const maage_client_ui *ui) {
     maage_client_ui_screen_id id = maage_client_ui_current(ui);
-    return id == MAAGE_CLIENT_UI_OPTIONS || id == MAAGE_CLIENT_UI_VIDEO_SETTINGS || id == MAAGE_CLIENT_UI_LOD_SETTINGS || id == MAAGE_CLIENT_UI_SOUND_SETTINGS || id == MAAGE_CLIENT_UI_CONTROLS;
+    return id == MAAGE_CLIENT_UI_OPTIONS || id == MAAGE_CLIENT_UI_VIDEO_SETTINGS || id == MAAGE_CLIENT_UI_SHADER_SETTINGS || id == MAAGE_CLIENT_UI_LOD_SETTINGS || id == MAAGE_CLIENT_UI_SOUND_SETTINGS || id == MAAGE_CLIENT_UI_CONTROLS;
 }
 int maage_client_ui_window_mode_changing(const maage_client_ui *ui) {
     return ui && (ui->mode_pending || ui->mode_changing);
@@ -639,7 +642,7 @@ maage_status maage_client_ui_draw(maage_client_ui *ui, const maage_client_ui_deb
         rectangle = ui->clip;
         if (id == MAAGE_CLIENT_UI_CONTROLS) maage_client_ui_menu_background(ui);
         else if (ui->has_snapshot && id != MAAGE_CLIENT_UI_LOADING && id != MAAGE_CLIENT_UI_SAVING) maage_client_ui_gradient(ui, rectangle, 0xC0101010UL, 0xD0101010UL);
-        else if (id == MAAGE_CLIENT_UI_OPTIONS || id == MAAGE_CLIENT_UI_VIDEO_SETTINGS || id == MAAGE_CLIENT_UI_LOD_SETTINGS || id == MAAGE_CLIENT_UI_SOUND_SETTINGS || id == MAAGE_CLIENT_UI_CONTROLS) maage_client_ui_menu_background(ui);
+        else if (id == MAAGE_CLIENT_UI_OPTIONS || id == MAAGE_CLIENT_UI_VIDEO_SETTINGS || id == MAAGE_CLIENT_UI_SHADER_SETTINGS || id == MAAGE_CLIENT_UI_LOD_SETTINGS || id == MAAGE_CLIENT_UI_SOUND_SETTINGS || id == MAAGE_CLIENT_UI_CONTROLS) maage_client_ui_menu_background(ui);
         /* Only interactive content is kept within safe-area bounds; the title
          * panorama and its darkening layer must fill even the notch region. */
         ui->clip = id == MAAGE_CLIENT_UI_TITLE || id == MAAGE_CLIENT_UI_LOADING || id == MAAGE_CLIENT_UI_SAVING ? rectangle : ui->content;

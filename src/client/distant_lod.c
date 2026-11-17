@@ -4,6 +4,7 @@
 #include "maage/geometry.h"
 #include "maage/geometry_materials.h"
 #include "maage/jobs.h"
+#include "maage/fluids.h"
 #include "maage/log.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -177,6 +178,8 @@ static void lod_write_face(maage_mesh_vertex *vertices, unsigned int *indices, s
         vertex->light[0] = 1.0f;
         vertex->light[1] = 0.0f;
         vertex->material = fluid ? MAAGE_MESH_MATERIAL_TRANSLUCENT : MAAGE_MESH_MATERIAL_OPAQUE;
+        if (fluid && state->fluid_definition && state->fluid_definition->shader_water) vertex->rotation_face = MAAGE_MESH_EFFECT_WATER << MAAGE_MESH_EFFECT_SHIFT;
+        else if (state->fast_texture) vertex->rotation_face = MAAGE_MESH_EFFECT_FOLIAGE << MAAGE_MESH_EFFECT_SHIFT;
     }
     for (k = 0; k < 6U; ++k)
         indices[elements + k] = (unsigned int) offset + triangles[k];

@@ -28,6 +28,7 @@ void maage_client_options_defaults(maage_client_options *options) {
     options->lod_quality = 1;
     options->shaders_enabled = 0;
     options->shader_quality = 1;
+    maage_shader_settings_preset(&options->shader_effects, 1);
     options->shader_exposure = 100;
     options->vsync = 1;
     options->view_bobbing = 1;
@@ -45,6 +46,8 @@ int maage_client_options_equal(const maage_client_options *a, const maage_client
         a->gui_scale != b->gui_scale || a->leaves != b->leaves || a->biome_blend != b->biome_blend ||
         a->window_mode != b->window_mode || a->fullscreen_style != b->fullscreen_style)
         return 0;
+    for (i = 0; i < MAAGE_SHADER_CONTROL_COUNT; ++i)
+        if (maage_shader_setting_get(&a->shader_effects, (unsigned int) i) != maage_shader_setting_get(&b->shader_effects, (unsigned int) i)) return 0;
     for (i = 0; i < MAAGE_CLIENT_AUDIO_BUS_COUNT; ++i)
         if (a->audio_volume[i] != b->audio_volume[i]) return 0;
     return 1;
@@ -86,7 +89,7 @@ static void maage_client_options_parse(maage_client_options *options, char *line
     key = maage_client_options_trim(line);
     if (!*key || *key == '#' || *key == ';') return;
     if (*key == '[') {
-        *section = !strcmp(key, "[video]") ? 1 : (!strcmp(key, "[audio]") ? 2 : (!strcmp(key, "[controls]") ? 3 : (!strcmp(key, "[mouse]") ? 4 : 0)));
+        *section = !strcmp(key, "[video]") ? 1 : (!strcmp(key, "[audio]") ? 2 : (!strcmp(key, "[controls]") ? 3 : (!strcmp(key, "[mouse]") ? 4 : (!strcmp(key, "[shaders]") ? 5 : 0))));
         return;
     }
     if (!*section) return;
@@ -95,6 +98,12 @@ static void maage_client_options_parse(maage_client_options *options, char *line
     *equals = 0;
     value = maage_client_options_trim(equals + 1);
     key = maage_client_options_trim(key);
+    if (*section == 5) {
+#define MAAGE_PARSE_SHADER(name, minimum, maximum) if (!strcmp(key, #name) && maage_client_options_integer(value, minimum, maximum, 1, &number)) options->shader_effects.name = number;
+        MAAGE_SHADER_CONTROLS(MAAGE_PARSE_SHADER)
+#undef MAAGE_PARSE_SHADER
+        return;
+    }
     if (*section == 3) {
         (void) maage_controls_parse(options->controls, key, value);
         return;
@@ -126,7 +135,7 @@ static void maage_client_options_parse(maage_client_options *options, char *line
         if (!strcmp(value, "true")) options->shaders_enabled = 1;
         else if (!strcmp(value, "false")) options->shaders_enabled = 0;
     } else if (!strcmp(key, "shader_quality")) {
-        if (maage_client_options_integer(value, 0, 2, 1, &number)) options->shader_quality = number;
+        if (maage_client_options_integer(value, 0, 3, 1, &number)) options->shader_quality = number;
     } else if (!strcmp(key, "shader_exposure")) {
         if (maage_client_options_integer(value, 25, 400, 1, &number)) options->shader_exposure = number;
     } else if (!strcmp(key, "lod_enabled")) {
@@ -222,6 +231,7 @@ maage_status maage_client_options_load(const maage_instance *instance, maage_cli
             (void) maage_control_set(controls, i, controls->actions[i].default_binding);
     }
     options->controls_revision = controls ? controls->revision : 0;
+    options->shader_quality = options->shader_exposure == 100 ? maage_shader_settings_classify(&options->shader_effects) : 3;
     return result;
 }
 
@@ -236,7 +246,7 @@ maage_status maage_client_options_save(const maage_instance *instance, const maa
         options->fov_degrees > 110 || (options->max_fps != 0 && (options->max_fps < 10 || options->max_fps > 260 || options->max_fps % 10)) ||
         options->render_distance < 1 || options->render_distance > MAAGE_WORLD_MAX_RADIUS || options->chunk_fade_ms < 0 || options->chunk_fade_ms > MAAGE_CLIENT_CHUNK_FADE_MAX_MS || options->chunk_fade_ms % MAAGE_CLIENT_CHUNK_FADE_STEP_MS ||
         (options->lod_enabled != 0 && options->lod_enabled != 1) || options->lod_distance < 1 || options->lod_distance > MAAGE_CLIENT_LOD_DISTANCE_MAX ||
-        (options->shaders_enabled != 0 && options->shaders_enabled != 1) || options->shader_quality < 0 || options->shader_quality > 2 || options->shader_exposure < 25 || options->shader_exposure > 400 ||
+        (options->shaders_enabled != 0 && options->shaders_enabled != 1) || options->shader_quality < 0 || options->shader_quality > 3 || !maage_shader_settings_valid(&options->shader_effects) || options->shader_exposure < 25 || options->shader_exposure > 400 ||
         options->lod_quality < 0 || options->lod_quality > 2 ||
         (options->vsync != 0 && options->vsync != 1) ||
         (options->view_bobbing != 0 && options->view_bobbing != 1) ||
@@ -276,8 +286,14 @@ maage_status maage_client_options_save(const maage_instance *instance, const maa
         result = maage_status_make(MAAGE_STATUS_IO_ERROR, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_WRITE, 0);
     else if (fprintf(file, "\n[mouse]\nsensitivity=%d\ninvert=%s\n%s", options->mouse_sensitivity, options->invert_mouse ? "true" : "false", bindings) < 0)
         result = maage_status_make(MAAGE_STATUS_IO_ERROR, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_WRITE, 0);
-    else
-        result = maage_storage_sync(file);
+    else {
+        result = maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_SAVE, 0);
+        if (fputs("\n[shaders]\n", file) < 0) result = maage_status_make(MAAGE_STATUS_IO_ERROR, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_WRITE, 0);
+#define MAAGE_WRITE_SHADER(name, minimum, maximum) if (!maage_status_failed(result) && fprintf(file, #name "=%d\n", options->shader_effects.name) < 0) result = maage_status_make(MAAGE_STATUS_IO_ERROR, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_WRITE, 0);
+        MAAGE_SHADER_CONTROLS(MAAGE_WRITE_SHADER)
+#undef MAAGE_WRITE_SHADER
+        if (!maage_status_failed(result)) result = maage_storage_sync(file);
+    }
     if (fclose(file) && !maage_status_failed(result)) result = maage_status_make(MAAGE_STATUS_IO_ERROR, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_CLOSE, 0);
     if (!maage_status_failed(result)) result = maage_storage_replace(temporary, destination);
     if (maage_status_failed(result)) maage_storage_remove(temporary);

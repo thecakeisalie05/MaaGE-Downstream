@@ -3,6 +3,7 @@
 #include "maage/window.h"
 #include "maage/geometry.h"
 #include "maage/status.h"
+#include "maage/render_effects.h"
 
 typedef struct maage_renderer maage_renderer;
 typedef struct maage_render_mesh maage_render_mesh;
@@ -49,6 +50,7 @@ typedef struct maage_render_desc {
 #define MAAGE_RENDER_CAP_FOG 0x8000UL
 #define MAAGE_RENDER_CAP_NATIVE_SHADERS 0x10000UL
 #define MAAGE_RENDER_CAP_NATIVE_HDR 0x20000UL
+#define MAAGE_RENDER_CAP_WORLD_EFFECTS 0x40000UL
 #define MAAGE_RENDER_FORMAT_RGBA8 0x01UL
 #define MAAGE_RENDER_FORMAT_BGRA8 0x02UL
 #define MAAGE_RENDER_SYNC_CPU_WAIT 0x01UL
@@ -142,6 +144,9 @@ maage_status maage_renderer_set_clear_color(maage_renderer *renderer, float red,
  * mapping; otherwise explicit SDR grading. Exposure is linear 0.25..4; quality 0..2
  * selects restrained color/contrast strength. Unsupported backends reject ON.
  * OFF adds no postprocess pass. Foreground, screen overlays and GUI are excluded. */
+/* Copy settings and scalar frame values, borrow lights through draw_frame.
+ * WORLD_EFFECTS requires the adapter's shadow/depth/frame-resource path. */
+maage_status maage_renderer_set_shader_effects(maage_renderer *renderer, const maage_shader_settings *settings, const maage_shader_frame *frame);
 maage_status maage_renderer_set_native_shaders(maage_renderer *renderer, int enabled, int quality, float exposure);
 /* Constant unlit floor for dimensions without celestial daylight; zero disables. */
 maage_status maage_renderer_set_ambient_light(maage_renderer *, float);
@@ -172,6 +177,8 @@ typedef struct maage_render_instance {
     float sky_light, block_light;
     float overlay[4]; /* RGB blended over lit texture, alpha is strength; zero disables. */
 } maage_render_instance;
+/* Optional frame-borrowed directional casters. NULL/zero uses visible world meshes. */
+maage_status maage_renderer_set_shadow_casters(maage_renderer *renderer, const maage_render_mesh *const *meshes, size_t count);
 maage_status maage_renderer_set_instances(maage_renderer *renderer, const maage_render_instance *instances, size_t count);
 /* Presentation clock in 20 Hz ticks; caller may wrap at a common animation
  * period. No texture uploads or mesh invalidation are needed to advance it. */

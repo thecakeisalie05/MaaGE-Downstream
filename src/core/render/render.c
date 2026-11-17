@@ -238,6 +238,31 @@ maage_status maage_renderer_set_clear_color(maage_renderer *renderer, float red,
     renderer->clear[3] = alpha;
     return MAAGE_STATUS_VALUE(MAAGE_STATUS_SUCCESS, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
 }
+maage_status maage_renderer_set_shadow_casters(maage_renderer *renderer, const maage_render_mesh *const *meshes, size_t count) {
+    if (!renderer || (count && !meshes)) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
+    renderer->shadow_casters = count ? meshes : NULL;
+    renderer->shadow_caster_count = count;
+    return maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_SET, 0);
+}
+maage_status maage_renderer_set_shader_effects(maage_renderer *renderer, const maage_shader_settings *settings, const maage_shader_frame *frame) {
+    size_t i;
+    unsigned int k;
+    if (!renderer || !maage_shader_settings_valid(settings) || !frame || (frame->light_count && !frame->lights)) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
+    for (k = 0; k < 3; ++k)
+        if (!(frame->camera[k] >= -FLT_MAX && frame->camera[k] <= FLT_MAX && frame->sun[k] >= -1 && frame->sun[k] <= 1 && frame->moon[k] >= -1 && frame->moon[k] <= 1)) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
+    if (!(frame->time_seconds >= 0 && frame->time_seconds <= FLT_MAX && frame->sun[3] >= 0 && frame->sun[3] <= 1 && frame->moon[3] >= 0 && frame->moon[3] <= 1)) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
+    for (k = 0; k < 4; ++k)
+        if (!(frame->weather[k] >= 0 && frame->weather[k] <= 1 && frame->sun_color[k] >= 0 && frame->sun_color[k] <= FLT_MAX && frame->moon_color[k] >= 0 && frame->moon_color[k] <= FLT_MAX)) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
+    for (i = 0; i < frame->light_count; ++i) {
+        const maage_render_light *light = &frame->lights[i];
+        for (k = 0; k < 4; ++k)
+            if (!(light->position_radius[k] >= -FLT_MAX && light->position_radius[k] <= FLT_MAX && light->color_intensity[k] >= 0 && light->color_intensity[k] <= FLT_MAX)) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
+        if (!(light->position_radius[3] > 0)) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
+    }
+    renderer->effects = *settings;
+    renderer->effect_frame = *frame;
+    return maage_status_make(renderer->capabilities.features & MAAGE_RENDER_CAP_WORLD_EFFECTS ? MAAGE_STATUS_SUCCESS : MAAGE_STATUS_PARTIAL, renderer->capabilities.features & MAAGE_RENDER_CAP_WORLD_EFFECTS ? 0 : MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
+}
 maage_status maage_renderer_set_native_shaders(maage_renderer *renderer, int enabled, int quality, float exposure) {
     if (!renderer || (enabled != 0 && enabled != 1) || quality < 0 || quality > 2 || !(exposure >= 0.25f && exposure <= 4.0f)) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPDATE, 0);
     if (enabled && !(renderer->capabilities.features & MAAGE_RENDER_CAP_NATIVE_SHADERS)) return maage_status_make(MAAGE_STATUS_NOT_IMPLEMENTED, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPDATE, 0);

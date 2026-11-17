@@ -1,6 +1,7 @@
 #include "world_internal.h"
 #include "maage/jobs.h"
 #include "maage/block_geometry.h"
+#include "maage/fluids.h"
 #include <limits.h>
 #include <stddef.h>
 #include <math.h>
@@ -311,6 +312,13 @@ static void maage_mesh_fluid_flow(const maage_block_registry *registry, const ma
     flow[1] = length > 0 ? (float) (vector[2] / length) : 0;
 }
 
+static unsigned int maage_mesh_shader_flags(const maage_block_definition *block, const maage_block_state_definition *state) {
+    unsigned int flags = 0;
+    if (block->shader_wind == 2 || block->foliage) flags |= MAAGE_MESH_EFFECT_FOLIAGE;
+    else if (block->shader_wind == 1 || block->mesh_shape == MAAGE_BLOCK_MESH_CROSS) flags |= MAAGE_MESH_EFFECT_ROOTED;
+    if (state->fluid_definition && state->fluid_definition->shader_water) flags |= MAAGE_MESH_EFFECT_WATER;
+    return flags << MAAGE_MESH_EFFECT_SHIFT;
+}
 static void maage_mesh_face(maage_mesh_vertex *vertices, unsigned int *indices, size_t face_index, int x, int y, int z, unsigned int face, const maage_block_face_definition *definition, const float uv[4], const maage_block_shape *shape, unsigned int model, unsigned int geometry_variant, int log_axis, float material, float tint[4][3], int smooth_tint, const float animation[3], const float fluid_heights[4], const float fluid_flow[2], const maage_mesh_illumination *illumination) {
     static const unsigned int offsets[2][6] = {{0, 1, 2, 0, 2, 3}, {0, 1, 3, 1, 2, 3}};
     static const float shade[MAAGE_FACE_COUNT] = {0.6f, 0.6f, 0.5f, 1.0f, 0.8f, 0.8f};
@@ -556,6 +564,7 @@ static maage_status maage_mesh_custom_quad_write(maage_mesh_custom_work *work, c
                 vertex->light[0] = light[0];
                 vertex->light[1] = light[1];
                 vertex->material = material;
+                vertex->rotation_face = maage_mesh_shader_flags(work->block, work->state);
             }
             for (corner = 0; corner < 6; ++corner)
                 work->indices[face * 6 + corner] = base + winding[corner];
@@ -789,6 +798,11 @@ static size_t maage_mesh_generate(const maage_block_registry *registry, const ma
                             }
                             if (overlay) maage_mesh_face(vertices, indices, face_count + 1, chunk->x * 16 + x, y, chunk->z * 16 + z, face, definition, definition->overlay_uv, &face_shape, model, state->geometry_variant, -1, MAAGE_MESH_MATERIAL_CUTOUT, colors[definition->overlay_tint_mode], definition->overlay_tint_mode && blend >= MAAGE_BIOME_BLEND_SMOOTH_5, NULL, NULL, NULL, &illumination);
                             if (reverse) maage_mesh_reverse_face(vertices, indices, face_count, face_count + 1 + (overlay ? 1 : 0));
+                        }
+                        if (vertices) {
+                            size_t decorated, end = (face_count + 1 + (overlay ? 1 : 0) + (reverse ? 1 : 0)) * 4;
+                            for (decorated = face_count * 4; decorated < end; ++decorated)
+                                vertices[decorated].rotation_face |= maage_mesh_shader_flags(current, state);
                         }
                         if (owners) {
                             size_t owner, end = face_count + 1 + (overlay ? 1 : 0) + (reverse ? 1 : 0);

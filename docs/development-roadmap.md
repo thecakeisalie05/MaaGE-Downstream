@@ -17,7 +17,7 @@ Incompatible development formats fail explicitly without migration/deletion.
 ## Remaining Milestones
 
 - **Client:** Complete UI/settings, accessibility, loading/cancellation and resource-failure handling.
-- **Native rendering:** Source now includes validated Vulkan HDR/filmic world processing with an explicit SDR fallback, compatible Metal SDR grading, and asynchronous persistent multiresolution Overworld LOD. Sampled scene depth, advanced materials/lighting, exact distant structures and runtime seamlessness/frame-pacing acceptance remain future work; Metal changes require macOS verification.
+- **Native rendering:** Source includes Vulkan HDR/filmic processing, cascaded directional shadows, RGB point lights, vegetation wind, depth-aware god rays, analytic sky and water/refraction/underwater effects, with independent persistent multiresolution Overworld LOD. Metal retains SDR grading; the six effects are Vulkan-only. Native visual/resource-lifecycle validation and GTX 1080 frame-time acceptance remain unverified. Broader material fidelity, point-light occlusion, exact distant structures and secondary-platform effect support remain future work.
 - **Fidelity:** Refine lighting, foliage/water, sky/weather, effects, animation and interaction on primary renderers.
 - **Survival:** Equipment, food, AI/navigation, breeding/riding, XP entities and enchanting.
 - **Advanced gameplay:** Redstone, expanded structures/block entities, dimension-specific mobs, Survival End access and boss/endgame progression. Named dimension Worlds, terrain/environment providers, player portal effects and append-only content credits are implemented; runtime verification remains programmer-owned.

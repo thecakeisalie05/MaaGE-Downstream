@@ -201,6 +201,13 @@ maage_status maage_render_frame_plan_prepare(maage_renderer *renderer, const maa
         plan->world.fog_distance[3] = (float) vertical;
     }
     plan->shaders_enabled = renderer->shaders_enabled && matrix != NULL && !plan->panorama_count;
+    plan->shadow_casters = renderer->shadow_casters;
+    plan->shadow_caster_count = renderer->shadow_caster_count;
+    if (plan->shaders_enabled)
+        for (index = 0; index < plan->shadow_caster_count; ++index)
+            if (!plan->shadow_casters[index] || plan->shadow_casters[index]->renderer != renderer || plan->shadow_casters[index]->upload) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_PRESENT, 0);
+    plan->effects = renderer->effects;
+    plan->effect_frame = renderer->effect_frame;
     plan->shader_exposure = renderer->shader_exposure;
     plan->shader_quality = (float) renderer->shader_quality;
     /* Celestial dimensions retain the environment's day/night fog color. Begin
@@ -408,6 +415,16 @@ void maage_render_mesh_pack_span(const maage_mesh_preparation *prepared, size_t 
         for (channel = 0; channel < 2; ++channel)
             packed.light[channel] = maage_render_unit_channel(source->light[channel]);
         packed.padding[0] = packed.padding[1] = 0;
+        if ((source->rotation_face >> MAAGE_MESH_EFFECT_SHIFT) & MAAGE_MESH_EFFECT_ROOTED) {
+            const maage_mesh_vertex *quad = &prepared->data.vertices[vertex - vertex % 4];
+            unsigned int corner;
+            float minimum = quad[0].position[1], maximum = minimum;
+            for (corner = 1; corner < 4 && vertex - vertex % 4 + corner < prepared->data.vertex_count; ++corner) {
+                if (quad[corner].position[1] < minimum) minimum = quad[corner].position[1];
+                if (quad[corner].position[1] > maximum) maximum = quad[corner].position[1];
+            }
+            packed.padding[0] = maage_render_unit_channel(maximum > minimum ? (source->position[1] - minimum) / (maximum - minimum) : 0);
+        } else if ((source->rotation_face >> MAAGE_MESH_EFFECT_SHIFT) & MAAGE_MESH_EFFECT_FOLIAGE) packed.padding[0] = 255;
         packed.surface = prepared->surface_indices[vertex];
         memcpy(target, (const unsigned char *) &packed + start, part);
         target += part;

@@ -3,6 +3,7 @@
 #include "maage/instance.h"
 #include "maage/world.h"
 #include "controls.h"
+#include "maage/render_effects.h"
 
 /* Numeric runtime choices; names are resolved only at the INI boundary. */
 typedef enum maage_client_window_choice {
@@ -57,6 +58,7 @@ typedef struct maage_client_options {
     int max_fps;                                    /* 0 unlimited, otherwise 10..260 in increments of 10. */
     int render_distance;                            /* Full-detail chunk radius. */
     int lod_enabled, lod_distance, lod_quality; /* Far visual radius and 0..2 coarseness; no gameplay effect. */
+    maage_shader_settings shader_effects;
     int shaders_enabled, shader_quality, shader_exposure; /* Exposure percent, 25..400. */
     int chunk_fade_ms; /* 0 disables; milliseconds, in slider steps. */
     int vsync;

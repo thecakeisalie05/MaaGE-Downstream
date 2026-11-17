@@ -455,6 +455,9 @@ maage_status maage_base_blocks(maage_content_context *context, maage_base_ids *i
     block.drop_count = 0;
     block.selectable = 0;
     block.emitted_light = 15;
+    block.emission_color[0] = 1.0f;
+    block.emission_color[1] = 0.42f;
+    block.emission_color[2] = 0.08f;
     block.use_neighbor_brightness = 1;
     block.material = ids->material_lava;
     result = maage_base_register_block(registry, "minecraft:lava", &block);
@@ -760,6 +763,9 @@ maage_status maage_base_blocks(maage_content_context *context, maage_base_ids *i
     block.drop_count = 1;
     block.selectable = 1;
     block.emitted_light = 14;
+    block.emission_color[0] = 1.0f;
+    block.emission_color[1] = 0.57f;
+    block.emission_color[2] = 0.25f;
     block.use_neighbor_brightness = 1;
     block.survives = maage_support_torch;
     block.mesh_shape = MAAGE_BLOCK_MESH_TORCH;

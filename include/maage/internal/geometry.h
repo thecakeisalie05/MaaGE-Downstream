@@ -14,6 +14,7 @@ typedef struct maage_geometry {
     double sort_origin[3];
     unsigned long revision;
     int sort_perspective;
+    float bounds[6]; /* Worker-computed source bounds, retained after upload. */
 } maage_geometry;
 
 typedef struct maage_mesh_surface {

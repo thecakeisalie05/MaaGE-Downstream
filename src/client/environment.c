@@ -573,7 +573,7 @@ static void maage_client_environment_portal(maage_client_environment *view, cons
                 view->weather_vertices[first + corner].color[channel] = profile->color[channel];
     }
 }
-maage_status maage_client_environment_update(maage_client_environment *view, maage_renderer *renderer, const maage_session_snapshot *snapshot, float width, float height, const float view_projection[16], const maage_world *visual, const double camera[3], double yaw, double pitch, int first_person, int radius, int scene_radius) {
+maage_status maage_client_environment_update(maage_client_environment *view, maage_renderer *renderer, const maage_session_snapshot *snapshot, float width, float height, const float view_projection[16], const maage_world *visual, const double camera[3], double yaw, double pitch, int first_person, int radius, int scene_radius, int shader_underwater) {
     const maage_client_environment_resource *resource;
     const maage_environment_state *state;
     const maage_fluid_definition *fluid;
@@ -601,7 +601,7 @@ maage_status maage_client_environment_update(maage_client_environment *view, maa
     result = maage_renderer_set_animation_tick(renderer, (float) (state->ticks_low % 3648UL));
     if (maage_status_failed(result)) return result;
     fluid = maage_fluid_get(maage_block_registry_fluids(maage_world_registry(visual)), maage_world_fluid_at(visual, camera));
-    if (fluid && fluid->fog_density > 0) {
+    if (fluid && fluid->fog_density > 0 && !(shader_underwater && fluid->shader_water)) {
         result = maage_world_present_light(visual, (int) floor(camera[0]), (int) floor(camera[1]), (int) floor(camera[2]), &light);
         if (maage_status_failed(result)) return result;
         if (maage_status_code(result) == MAAGE_STATUS_SUCCESS || maage_status_code(result) == MAAGE_STATUS_PARTIAL) {
@@ -665,7 +665,7 @@ maage_status maage_client_environment_update(maage_client_environment *view, maa
     }
     phase = (double) (state->ticks_low % 120000UL) * 0.05;
     resource = &maage_client_environment_resources[cold ? 3 : 2];
-    if (precipitation && rain > 0 && view->available[cold ? 3 : 2])
+    if (precipitation && rain > 0 && view->available[cold ? 3 : 2] && !(shader_underwater && fluid && fluid->shader_water))
         for (i = 0; i < 48; ++i) {
             hash = (i * 1664525U + 1013904223U) ^ (i * 7919U);
             x = (float) (hash % 1009U) / 1009 * width;

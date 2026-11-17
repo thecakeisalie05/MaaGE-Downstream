@@ -111,6 +111,7 @@ struct maage_client_ui {
     int primary_down, pointer_hover, cursor_unavailable;
     int debug, gui_scale, requested_scale, fps_step, vsync, vsync_supported, view_bobbing, dragging_fps, leaves_mode, biome_blend;
     int render_distance, render_distance_max, dragging_distance, chunk_fade_ms, dragging_chunk_fade;
+    maage_shader_settings shader_effects;
     int shaders_enabled, shader_quality, shader_exposure;
     int lod_enabled, lod_distance, lod_quality, dragging_lod;
     int audio_volume[7], dragging_volume;

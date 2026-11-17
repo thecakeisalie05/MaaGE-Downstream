@@ -1,6 +1,8 @@
 /* Offline regression checks use the actual tile planner/cache/job code and
  * native content registries. No renderer/window, accounts or World assets. */
 #include "distant_lod.c"
+#include "options.c"
+#include "../core/render/render_effects_internal.h"
 #include "../application/content_modules.h"
 #include "../core/render/render_internal.h"
 #include "maage/dimensions.h"
@@ -104,6 +106,130 @@ static void check_frame_plan(void) {
     assert(!maage_status_failed(maage_render_frame_plan_prepare(&renderer, NULL, 0, NULL, NULL, 0, &plan)));
     assert(!plan.shaders_enabled);
     free(renderer.ordered);
+}
+static void check_effect_material_pack(void) {
+    maage_mesh_vertex vertices[4];
+    maage_mesh_data data;
+    maage_mesh_preparation *prepared = NULL;
+    maage_render_gpu_mesh_vertex packed[4], partial[4];
+    unsigned int indices[6] = {0, 1, 2, 0, 2, 3};
+    unsigned int i, channel;
+    memset(vertices, 0, sizeof(vertices));
+    memset(&data, 0, sizeof(data));
+    for (i = 0; i < 4; ++i) {
+        vertices[i].position[0] = i == 1 || i == 2 ? 1.0f : 0;
+        vertices[i].position[1] = i >= 2 ? 1.0f : 0;
+        vertices[i].material = MAAGE_MESH_MATERIAL_CUTOUT;
+        vertices[i].rotation_face = MAAGE_MESH_EFFECT_ROOTED << MAAGE_MESH_EFFECT_SHIFT;
+        for (channel = 0; channel < 4; ++channel)
+            vertices[i].color[channel] = 1;
+    }
+    data.vertices = vertices;
+    data.vertex_count = 4;
+    data.indices = indices;
+    data.index_count = 6;
+    assert(!maage_status_failed(maage_mesh_prepare(&data, &prepared)));
+    assert(prepared->geometry.bounds[0] == 0 && prepared->geometry.bounds[3] == 1 && prepared->geometry.bounds[4] == 1);
+    maage_render_mesh_pack_span(prepared, 0, sizeof(packed), packed);
+    maage_render_mesh_pack_span(prepared, 0, 37, partial);
+    maage_render_mesh_pack_span(prepared, 37, sizeof(partial) - 37, (unsigned char *) partial + 37);
+    assert(!memcmp(packed, partial, sizeof(packed)) && maage_render_gpu_layout_supported());
+    assert(packed[0].padding[0] == 0 && packed[1].padding[0] == 0 && packed[2].padding[0] == 255 && packed[3].padding[0] == 255);
+    assert(((unsigned int) prepared->surfaces[0].material_rotation / MAAGE_MESH_MATERIAL_COUNT >> MAAGE_MESH_EFFECT_SHIFT) == MAAGE_MESH_EFFECT_ROOTED);
+    maage_mesh_preparation_destroy(prepared);
+}
+static void check_shader_effects(const char *directory) {
+    maage_shader_settings settings, saved;
+    maage_client_options options, loaded;
+    maage_renderer renderer;
+    maage_shader_frame frame;
+    maage_render_frame_plan plan;
+    maage_effect_uniforms uniforms, night;
+    maage_instance *instance = NULL;
+    char error[256], path[MAAGE_PATH_CAPACITY], line[96];
+    int preset, section = 0;
+    unsigned int i, j, k, control;
+    float sum, center[4], bounds[6] = {-1, -1, -1, 1, 1, 1};
+    float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    for (preset = 0; preset < 3; ++preset) {
+        assert(!maage_status_failed(maage_shader_settings_preset(&settings, preset)));
+        assert(maage_shader_settings_valid(&settings) && maage_shader_settings_classify(&settings) == preset);
+        saved = settings;
+        assert(maage_status_failed(maage_shader_setting_set(&settings, MAAGE_SHADER_shadow_distance, 257)));
+        assert(settings.shadow_distance == saved.shadow_distance);
+        for (control = 0; control < MAAGE_SHADER_CONTROL_COUNT; ++control)
+            assert(!maage_status_failed(maage_shader_setting_set(&settings, control, maage_shader_setting_get(&settings, control))));
+        settings.wind = 93;
+        assert(maage_shader_settings_classify(&settings) == 3);
+    }
+    maage_client_options_defaults(&options);
+    assert(!options.shaders_enabled && options.shader_quality == 1 && options.shader_effects.shadow_distance == 96);
+    strcpy(line, "[shaders]");
+    maage_client_options_parse(&options, line, &section);
+    strcpy(line, "shadow_distance=256");
+    maage_client_options_parse(&options, line, &section);
+    strcpy(line, "shadow_quality=3");
+    maage_client_options_parse(&options, line, &section);
+    strcpy(line, "wind=101");
+    maage_client_options_parse(&options, line, &section);
+    assert(options.shader_effects.shadow_distance == 256 && options.shader_effects.shadow_quality == 3 && options.shader_effects.wind == 40);
+    if (directory) {
+        assert(!maage_status_failed(maage_instance_create(directory, "Offline shader settings", "", "", &instance, error, NULL)));
+        assert(!maage_status_failed(maage_instance_resolve_path(instance, MAAGE_INSTANCE_FOLDER_CONFIG, NULL, path, sizeof(path))));
+        assert(!maage_status_failed(maage_storage_directories(path)));
+        options.shader_quality = 3;
+        options.shader_exposure = 125;
+        assert(!maage_status_failed(maage_client_options_save(instance, &options, "")));
+        assert(!maage_status_failed(maage_client_options_load(instance, &loaded, NULL)));
+        assert(maage_client_options_equal(&options, &loaded));
+        assert(!maage_status_failed(maage_instance_close(instance)));
+    }
+    memset(&renderer, 0, sizeof(renderer));
+    memset(&frame, 0, sizeof(frame));
+    memset(&plan, 0, sizeof(plan));
+    maage_shader_settings_preset(&plan.effects, 1);
+    plan.effect_frame.sun[0] = 0.6f;
+    plan.effect_frame.sun[1] = 0.8f;
+    plan.effect_frame.sun[3] = 0.8f;
+    plan.effect_frame.moon[0] = -0.6f;
+    plan.effect_frame.moon[1] = -0.8f;
+    plan.effect_frame.weather[2] = 1;
+    plan.world.matrix[0] = plan.world.matrix[5] = 1;
+    plan.world.matrix[10] = -1.001f;
+    plan.world.matrix[11] = -1;
+    plan.world.matrix[14] = -0.1001f;
+    assert(!maage_status_failed(maage_render_effect_uniforms_prepare(&plan, 1920, 1080, 3, 1536, &uniforms)));
+    assert(sizeof(uniforms) == 576 && uniforms.features[0] == 1 && uniforms.splits[0] < uniforms.splits[1] && uniforms.splits[1] < uniforms.splits[2] && uniforms.splits[2] == 96);
+    for (i = 0; i < 4; ++i)
+        for (j = 0; j < 4; ++j) {
+            sum = 0;
+            for (k = 0; k < 4; ++k)
+                sum += plan.world.matrix[k * 4 + j] * uniforms.inverse_view_projection[i * 4 + k];
+            assert(fabs(sum - (i == j ? 1.0 : 0.0)) < 0.0001);
+        }
+    for (i = 0; i < 3; ++i) {
+        for (j = 0; j < 4; ++j)
+            center[j] = uniforms.shadows[i][j + 8] * -(uniforms.splits[i] + (i ? uniforms.splits[i - 1] : 0.1f)) * 0.5f + uniforms.shadows[i][12 + j];
+        assert(fabs(center[0]) < 1 && fabs(center[1]) < 1 && center[2] > 0 && center[2] < 1);
+    }
+    assert(maage_render_effect_bounds_visible(bounds, identity));
+    identity[12] = 10;
+    assert(!maage_render_effect_bounds_visible(bounds, identity));
+    plan.effect_frame.sun[3] = 0;
+    plan.effect_frame.moon[3] = 0.08f;
+    assert(!maage_status_failed(maage_render_effect_uniforms_prepare(&plan, 800, 600, 4, 1024, &night)));
+    assert(memcmp(uniforms.shadows, night.shadows, sizeof(uniforms.shadows)));
+    plan.effect_frame.weather[2] = 0;
+    assert(!maage_status_failed(maage_render_effect_uniforms_prepare(&plan, 800, 600, 0, 1, &night)));
+    assert(night.features[0] == 0 && night.features[3] == 0 && night.quality[1] == 0);
+    memset(plan.world.matrix, 0, sizeof(plan.world.matrix));
+    assert(maage_status_failed(maage_render_effect_uniforms_prepare(&plan, 800, 600, 0, 1, &night)));
+    maage_shader_settings_preset(&settings, 1);
+    assert(maage_status_code(maage_renderer_set_shader_effects(&renderer, &settings, &frame)) == MAAGE_STATUS_PARTIAL);
+    renderer.capabilities.features = MAAGE_RENDER_CAP_WORLD_EFFECTS;
+    assert(!maage_status_failed(maage_renderer_set_shader_effects(&renderer, &settings, &frame)));
+    frame.weather[3] = 2;
+    assert(maage_status_failed(maage_renderer_set_shader_effects(&renderer, &settings, &frame)));
 }
 static void check_observed_jobs(maage_distant_lod *lod, const maage_content *content) {
     maage_world_config config;
@@ -234,6 +360,8 @@ int main(int argc, char **argv) {
     assert(lod);
     check_cache(lod);
     check_frame_plan();
+    check_effect_material_pack();
+    check_shader_effects(argc > 1 ? argv[1] : NULL);
     if (argc > 1) check_observed_jobs(lod, content);
     for (near_radius = 4; near_radius <= 32; near_radius += 14)
         for (far_radius = 16; far_radius <= 128; far_radius *= 2)
@@ -261,6 +389,6 @@ int main(int argc, char **argv) {
     assert(lod->overflow && lod->capacity == maage_distant_lod_capacity(NULL));
     assert(!maage_status_failed(maage_distant_lod_destroy(lod)));
     maage_content_destroy(content);
-    puts("PASS: shader plans; cache integrity/identity; observed edits and atomic publication; real Jobs generation; epoch fencing; negative-coordinate multiresolution coverage and distance changes.");
+    puts("PASS: shader presets/INI round trip/frame validation/CSM transforms; shader plans; cache integrity/identity; observed edits and atomic publication; real Jobs generation; epoch fencing; negative-coordinate multiresolution coverage and distance changes.");
     return 0;
 }

@@ -1,4 +1,4 @@
-add_library(maage_render STATIC render.c render_shared.c)
+add_library(maage_render STATIC render.c render_shared.c render_effects.c render_effects_math.c)
 add_library(MaaGE::Render ALIAS maage_render)
 maage_configure_portable_target(maage_render)
 target_include_directories(maage_render PUBLIC "${PROJECT_SOURCE_DIR}/include")
@@ -114,7 +114,7 @@ if((MAAGE_PLATFORM_WINDOWS OR MAAGE_PLATFORM_LINUX OR MAAGE_PLATFORM_MACOS) AND 
     endif()
     set(MAAGE_VULKAN_GENERATED "${PROJECT_BINARY_DIR}/generated/vulkan")
     set(MAAGE_VULKAN_SPIRV)
-    foreach(MAAGE_SHADER mesh.vert mesh.frag ui.vert ui.frag fullscreen.vert blur.frag)
+    foreach(MAAGE_SHADER mesh.vert mesh.frag ui.vert ui.frag fullscreen.vert blur.frag effects_mesh.vert effects_mesh.frag shadow.vert shadow.frag sky.frag scatter.frag effects_post.frag)
         string(REPLACE "." "_" MAAGE_SHADER_NAME "${MAAGE_SHADER}")
         set(MAAGE_SHADER_OUTPUT "${MAAGE_VULKAN_GENERATED}/${MAAGE_SHADER_NAME}.spv")
         if(MAAGE_GLSLC)
@@ -127,7 +127,7 @@ if((MAAGE_PLATFORM_WINDOWS OR MAAGE_PLATFORM_LINUX OR MAAGE_PLATFORM_MACOS) AND 
             COMMAND ${MAAGE_SHADER_COMMAND} "-I${PROJECT_SOURCE_DIR}/include"
                 "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/shaders/${MAAGE_SHADER}"
                 -o "${MAAGE_SHADER_OUTPUT}"
-            DEPENDS "vulkan/shaders/${MAAGE_SHADER}" vulkan/shaders/common.glsl render_shader_common.h render_shader_defs.h
+            DEPENDS "vulkan/shaders/${MAAGE_SHADER}" vulkan/shaders/common.glsl vulkan/shaders/effects.glsl render_shader_common.h render_shader_defs.h
                 "${PROJECT_SOURCE_DIR}/include/maage/geometry_materials.h" VERBATIM)
         list(APPEND MAAGE_VULKAN_SPIRV "${MAAGE_SHADER_OUTPUT}")
     endforeach()

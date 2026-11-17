@@ -27,6 +27,7 @@ maage_status maage_base_fluids_register(maage_content_context *context, maage_ba
     if (!context || !ids) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_REGISTRY, MAAGE_OPERATION_REGISTER, 0);
     memset(&water, 0, sizeof(water));
     water.evaporates = 1;
+    water.shader_water = 1;
     water.flow_levels = 8;
     water.tick_delay = 5;
     water.level_step = water.falling_spread_level = 1;

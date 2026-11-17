@@ -14,6 +14,8 @@ int maage_client_item_entities_target(const maage_client_item_entities *, const 
 maage_status maage_client_item_entities_mesh(maage_client_item_entities *view, const maage_item_stack *stack, const maage_render_mesh **mesh, maage_status_trace *trace);
 maage_status maage_client_item_entities_break(maage_client_item_entities *, maage_world *, const maage_session_event *, double, maage_status_trace *);
 maage_status maage_client_item_entities_pickup(maage_client_item_entities *view, const maage_session_event *event, double now);
+/* Prioritized presentation light sources from the copied entity publication. */
+void maage_client_item_entities_lights(const maage_client_item_entities *, maage_render_light *, size_t *, size_t, const double[3], double);
 /* Diagnostic submission marker; does no work without world diagnostics. */
 void maage_client_item_entities_submitted(maage_client_item_entities *view);
 maage_status maage_client_item_entities_clear(maage_client_item_entities *view);

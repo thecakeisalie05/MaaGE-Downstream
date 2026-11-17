@@ -39,7 +39,7 @@ void maage_client_profiler_open(maage_client_profiler *p, const char *directory)
         return;
     }
     setvbuf(p->file, p->io_buffer, _IOFBF, sizeof(p->io_buffer));
-    if (fputs("frame,tick,interval_ms,work_ms,input_ms,scene_ms,setup_ms,renderer_ms,upload_ms,other_ms,loaded,pending,running_jobs,uploaded_meshes,upload_budget_ms,presented,lod_tiles,lod_jobs,lod_upload,lod_hits,lod_generated,lod_stale,lod_worker_ms,lod_gpu_estimate_bytes,lod_budget_limited,shaders,shader_quality,shader_exposure\n", p->file) < 0) {
+    if (fputs("frame,tick,interval_ms,work_ms,input_ms,scene_ms,setup_ms,renderer_ms,upload_ms,other_ms,loaded,pending,running_jobs,uploaded_meshes,upload_budget_ms,presented,lod_tiles,lod_jobs,lod_upload,lod_hits,lod_generated,lod_stale,lod_worker_ms,lod_gpu_estimate_bytes,lod_budget_limited,shaders,shader_quality,shader_exposure,effects_supported,shadows,shadow_quality,shadow_distance,dynamic_lights,light_quality,selected_lights,waving,wind,god_rays,ray_quality,sky,water,water_quality,underwater\n", p->file) < 0) {
         fclose(p->file);
         p->file = NULL;
         return;
@@ -75,9 +75,9 @@ void maage_client_profiler_record(maage_client_profiler *p, const maage_client_p
     if (work > p->max_ms) p->max_ms = work;
     if (work > 33.333) ++p->hitches;
     ++p->frames;
-    if (fprintf(p->file, "%lu,%lu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%u,%u,%u,%u,%.3f,%d,%u,%u,%u,%lu,%lu,%lu,%.3f,%.0f,%d,%d,%d,%d\n",
+    if (fprintf(p->file, "%lu,%lu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%u,%u,%u,%u,%.3f,%d,%u,%u,%u,%lu,%lu,%lu,%.3f,%.0f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%u,%d,%d,%d,%d,%d,%d,%d,%d\n",
                 p->frames, tick, interval * 1000.0, work, input, scene, setup, render, upload, other,
-                loaded, pending, running_jobs, uploaded_meshes, upload_budget_ms, presented, p->lod.resident, p->lod.active, p->lod.publication_backlog, p->lod.cache_hits, p->lod.generated, p->lod.stale, p->lod.generation_ms, (double) p->lod.gpu_bytes_estimate, p->lod.budget_limited, p->shaders_enabled, p->shader_quality, p->shader_exposure) < 0) {
+                loaded, pending, running_jobs, uploaded_meshes, upload_budget_ms, presented, p->lod.resident, p->lod.active, p->lod.publication_backlog, p->lod.cache_hits, p->lod.generated, p->lod.stale, p->lod.generation_ms, (double) p->lod.gpu_bytes_estimate, p->lod.budget_limited, p->shaders_enabled, p->shader_quality, p->shader_exposure, p->shader_effects_supported, p->effects.shadows, p->effects.shadow_quality, p->effects.shadow_distance, p->effects.dynamic_lights, p->effects.light_quality, p->shader_lights, p->effects.waving, p->effects.wind, p->effects.god_rays, p->effects.ray_quality, p->effects.sky, p->effects.water, p->effects.water_quality, p->effects.underwater) < 0) {
         maage_log_warning("maage.client.profiler", "Profiling output write failed; disabling capture.");
         maage_client_profiler_close(p);
         return;

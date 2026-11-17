@@ -16,6 +16,9 @@ typedef struct maage_client_profiler {
     double last_input_ms, last_scene_ms, last_setup_ms, last_render_ms, last_upload_ms;
     maage_distant_lod_stats lod;
     int shaders_enabled, shader_quality, shader_exposure;
+    maage_shader_settings effects;
+    unsigned int shader_lights;
+    int shader_effects_supported;
     int active;
 } maage_client_profiler;
 /* Optional and owner-thread-only. Timestamps measure elapsed CPU thread wall time;

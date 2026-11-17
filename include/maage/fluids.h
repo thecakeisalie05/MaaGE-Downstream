@@ -35,6 +35,7 @@ typedef struct maage_fluid_definition {
     float fog_color[3];
     float fog_density, fov_scale;
     int fog_light_scaled, has_overlay_texture;
+    int shader_water;              /* Explicit opt-in refractive water appearance. */
     unsigned long overlay_texture; /* Registered texture; interpreted only when enabled. */
     maage_fluid_contact contact;
     const void *context; /* Borrowed immutable module data; outlives registry. */

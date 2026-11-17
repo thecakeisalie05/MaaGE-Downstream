@@ -35,7 +35,7 @@ static maage_status maage_geometry_validate(const maage_mesh_data *data) {
         const float *animation = data->vertices[index].animation;
         const float *tile = data->vertices[index].tile;
         unsigned int rotation_face = data->vertices[index].rotation_face;
-        if (rotation_face > MAAGE_MESH_ROTATION_FACE_COUNT || (rotation_face && !(tile[2] > tile[0] && tile[3] > tile[1]))) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPLOAD, 1);
+        if ((rotation_face & 7U) > MAAGE_MESH_ROTATION_FACE_COUNT || (rotation_face >> 3U) > MAAGE_MESH_EFFECT_MASK || ((rotation_face & 7U) && !(tile[2] > tile[0] && tile[3] > tile[1]))) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPLOAD, 1);
         for (axis = 0; axis < 4; ++axis)
             if (!(tile[axis] >= 0 && tile[axis] <= 1)) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPLOAD, 1);
         if (tile[2] < tile[0] || tile[3] < tile[1] || (tile[2] > tile[0]) != (tile[3] > tile[1])) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPLOAD, 1);
@@ -176,6 +176,18 @@ maage_status maage_mesh_prepare(const maage_mesh_data *data, maage_mesh_preparat
         maage_mesh_preparation_destroy(prepared);
         return result;
     }
+    {
+        size_t vertex;
+        unsigned int axis;
+        for (axis = 0; axis < 3; ++axis)
+            prepared->geometry.bounds[axis] = prepared->geometry.bounds[axis + 3] = data->vertices[0].position[axis];
+        for (vertex = 1; vertex < data->vertex_count; ++vertex)
+            for (axis = 0; axis < 3; ++axis) {
+                float value = data->vertices[vertex].position[axis];
+                if (value < prepared->geometry.bounds[axis]) prepared->geometry.bounds[axis] = value;
+                if (value > prepared->geometry.bounds[axis + 3]) prepared->geometry.bounds[axis + 3] = value;
+            }
+    }
     prepared->data = *data;
     prepared->data.indices = prepared->indices;
     *output = prepared;
@@ -263,6 +275,7 @@ maage_status maage_mesh_prepare_index_view(const maage_mesh_data *data, const un
         previous = source + 1;
     }
     free(original);
+    memcpy(prepared->geometry.bounds, base->bounds, sizeof(base->bounds));
     prepared->data = *data;
     prepared->data.indices = prepared->indices;
     *output = prepared;

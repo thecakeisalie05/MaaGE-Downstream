@@ -1,5 +1,6 @@
 #include "particles.h"
 #include "player_model.h"
+#include "shader_scene.h"
 #include "maage/entities.h"
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,7 @@ typedef struct client_particle {
     const maage_render_mesh *mesh;
     double position[3], previous[3], velocity[3], size, gravity, drag, ground_drag, born;
     unsigned int age, lifetime;
+    float emission[4], light_radius;
 } client_particle;
 struct maage_client_particles {
     maage_renderer *renderer;
@@ -130,6 +132,8 @@ maage_status maage_client_particles_emit(maage_client_particles *particles, cons
     for (i = 0; i < count; ++i) {
         particle = &particles->data[particles->count++];
         memset(particle, 0, sizeof(*particle));
+        memcpy(particle->emission, definitions[i].emission, sizeof(particle->emission));
+        particle->light_radius = definitions[i].light_radius;
         particle->born = now;
         particle->mesh = definitions[i].mesh;
         particle->size = definitions[i].size;
@@ -189,6 +193,14 @@ maage_status maage_client_particles_break(maage_client_particles *particles, maa
         fragments[i].mesh = appearance->mesh[(unsigned int) (particle_random(&random) * 16)];
         memcpy(fragments[i].position, particle->position, sizeof(particle->position));
         memcpy(fragments[i].velocity, particle->velocity, sizeof(particle->velocity));
+        if (definition->emitted_light) {
+            const maage_block_definition *block = maage_block_registry_block(particles->blocks, definition->block_id);
+            for (axis = 0; axis < 3; ++axis)
+                fragments[i].emission[axis] = (block->emission_color[0] > 0 || block->emission_color[1] > 0 || block->emission_color[2] > 0) ? block->emission_color[axis] : (axis == 0 ? 1.0f : axis == 1 ? 0.57f
+                                                                                                                                                                                                           : 0.25f);
+            fragments[i].emission[3] = definition->emitted_light / 15.0f * 0.6f;
+            fragments[i].light_radius = 3;
+        }
         fragments[i].size = particle->size;
         fragments[i].lifetime = particle->lifetime;
         fragments[i].gravity = 0.04;
@@ -282,4 +294,20 @@ void maage_client_particles_destroy(maage_client_particles *particles) {
     }
     free(particles->data);
     free(particles);
+}
+
+void maage_client_particles_lights(const maage_client_particles *particles, maage_render_light *lights, size_t *count, size_t capacity, const double eye[3]) {
+    size_t i;
+    unsigned int axis;
+    double position[3], alpha;
+    if (!particles) return;
+    alpha = particles->remainder / 0.05;
+    if (alpha > 1) alpha = 1;
+    for (i = 0; i < particles->count; ++i) {
+        const client_particle *p = &particles->data[i];
+        if (!(p->emission[3] > 0)) continue;
+        for (axis = 0; axis < 3; ++axis)
+            position[axis] = p->previous[axis] + (p->position[axis] - p->previous[axis]) * alpha;
+        maage_client_shader_light_offer(lights, count, capacity, eye, position, p->emission, p->emission[3] * (1.0f - (float) p->age / p->lifetime), p->light_radius);
+    }
 }

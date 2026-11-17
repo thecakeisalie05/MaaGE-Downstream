@@ -4,7 +4,7 @@ if(NOT MAAGE_CLIENT_VERSION_PRERELEASE STREQUAL "")
 endif()
 maage_client_target_architecture(MAAGE_CLIENT_ARCH)
 set(MAAGE_CLIENT_ARTIFACT "MaaGE-Client-${MAAGE_CLIENT_RELEASE}")
-add_executable(maage_client ../application/content_modules.c main.c metadata.c viewport.c frontend.c pacing.c storage_context.c options.c controls.c resources.c debug.c profiler.c lod.c distant_lod.c screenshot.c interaction.c camera.c player_model.c player_view.c prediction.c models.c item_models.c item_entities.c particles.c environment.c
+add_executable(maage_client ../application/content_modules.c main.c metadata.c viewport.c shader_scene.c frontend.c pacing.c storage_context.c options.c controls.c resources.c debug.c profiler.c lod.c distant_lod.c screenshot.c interaction.c camera.c player_model.c player_view.c prediction.c models.c item_models.c item_entities.c particles.c environment.c
     audio_service.c audio_scene.c audio_native.c
     ui/ui.c ui/credits.c ui/gameplay.c ui/inventory.c ui/player_preview.c ui/navigation.c ui/resources.c ui/font.c ui/draw.c ui/front.c ui/title.c ui/options.c ui/controls.c ui/splash.c)
 add_dependencies(maage_client maage_versions)
@@ -77,7 +77,7 @@ install(FILES "${MAAGE_CLIENT_MANIFEST}" DESTINATION "${CMAKE_INSTALL_BINDIR}" C
 # Explicit offline checks; never part of normal builds or graphical startup.
 option(MAAGE_BUILD_CLIENT_CHECKS "Build offline native shader/LOD regression checks" OFF)
 if(MAAGE_BUILD_CLIENT_CHECKS)
-    add_executable(maage_client_lod_checks EXCLUDE_FROM_ALL lod_checks.c lod.c ../application/content_modules.c)
+    add_executable(maage_client_lod_checks EXCLUDE_FROM_ALL lod_checks.c lod.c controls.c ../application/content_modules.c)
     maage_configure_portable_target(maage_client_lod_checks)
     target_link_libraries(maage_client_lod_checks PRIVATE MaaGE::Base MaaGE::World MaaGE::Render MaaGE::Instance)
 endif()

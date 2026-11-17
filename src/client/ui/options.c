@@ -9,6 +9,8 @@
 #define MAAGE_OPTIONS_MAIN_COUNT 12U
 #define MAAGE_OPTIONS_VIDEO_COUNT 19U
 #define MAAGE_OPTIONS_LOD_COUNT 4U
+#define MAAGE_OPTIONS_SHADER_COUNT 17U
+#define MAAGE_OPTIONS_SHADER_DONE 16U
 #define MAAGE_OPTIONS_SOUND_COUNT 8U
 #define MAAGE_OPTIONS_VIDEO_FADE 17U
 #define MAAGE_OPTIONS_VIDEO_DONE 18U
@@ -117,7 +119,7 @@ static maage_client_ui_rect maage_options_rect(const maage_client_ui *ui, maage_
         }
         return r;
     }
-    if (id == MAAGE_OPTIONS_VIDEO_DONE) {
+    if (id == (screen == MAAGE_CLIENT_UI_SHADER_SETTINGS ? MAAGE_OPTIONS_SHADER_DONE : MAAGE_OPTIONS_VIDEO_DONE)) {
         r.width = ui->content.width > 224.0f ? 200.0f : ui->content.width - 24.0f;
         r.x = center - r.width * 0.5f;
         r.y = ui->content.y + ui->content.height - 27.0f;
@@ -134,22 +136,24 @@ static maage_client_ui_rect maage_options_rect(const maage_client_ui *ui, maage_
     return r;
 }
 static unsigned int maage_options_count(maage_client_ui_screen_id screen) {
+    if (screen == MAAGE_CLIENT_UI_SHADER_SETTINGS) return MAAGE_OPTIONS_SHADER_COUNT;
     if (screen == MAAGE_CLIENT_UI_LOD_SETTINGS) return MAAGE_OPTIONS_LOD_COUNT;
     if (screen == MAAGE_CLIENT_UI_SOUND_SETTINGS) return MAAGE_OPTIONS_SOUND_COUNT;
     if (screen == MAAGE_CLIENT_UI_VIDEO_SETTINGS) return MAAGE_OPTIONS_VIDEO_COUNT;
     return MAAGE_OPTIONS_MAIN_COUNT;
 }
 static int maage_options_enabled(const maage_client_ui *ui, maage_client_ui_screen_id screen, unsigned int id) {
+    if (screen == MAAGE_CLIENT_UI_SHADER_SETTINGS) {
+        maage_render_capabilities capabilities;
+        maage_renderer_get_capabilities(ui->renderer, &capabilities);
+        if (id == MAAGE_OPTIONS_SHADER_DONE) return 1;
+        return (capabilities.features & (id == 0U || id == 1U || id == 15U ? MAAGE_RENDER_CAP_NATIVE_SHADERS : MAAGE_RENDER_CAP_WORLD_EFFECTS)) != 0;
+    }
     if (screen == MAAGE_CLIENT_UI_OPTIONS) return id == 0U || id == 3U || id == 5U || id == 6U || id == MAAGE_OPTIONS_MAIN_DONE;
     if (screen == MAAGE_CLIENT_UI_LOD_SETTINGS) return id < MAAGE_OPTIONS_LOD_COUNT;
     if (screen == MAAGE_CLIENT_UI_SOUND_SETTINGS) return id < MAAGE_OPTIONS_SOUND_COUNT;
     if (screen == MAAGE_CLIENT_UI_VIDEO_SETTINGS) {
-        if (id == 0U || id == 2U || id == 8U) {
-            maage_render_capabilities capabilities;
-            maage_renderer_get_capabilities(ui->renderer, &capabilities);
-            return (capabilities.features & MAAGE_RENDER_CAP_NATIVE_SHADERS) != 0;
-        }
-        if (id == 0U || id == 2U || id == 8U || id == 1U || id == 3U || id == 5U || id == 6U || id == 14U || id == 15U || id == 10U || id == MAAGE_OPTIONS_VIDEO_FADE || id == MAAGE_OPTIONS_VIDEO_DONE) return 1;
+        if (id == 0U || id == 1U || id == 3U || id == 5U || id == 6U || id == 14U || id == 15U || id == 10U || id == MAAGE_OPTIONS_VIDEO_FADE || id == MAAGE_OPTIONS_VIDEO_DONE) return 1;
         if (id == 12U) return ui->vsync_supported;
         if (id == 11U) return !ui->mode_pending && !ui->mode_changing;
         if (id == 16U) return ui->has_snapshot;
@@ -185,7 +189,7 @@ static void maage_options_focus_step(maage_client_ui *ui, maage_client_ui_screen
 }
 static void maage_options_scroll_selected(maage_client_ui *ui) {
     unsigned int row, visible;
-    if (ui->selected == MAAGE_OPTIONS_VIDEO_DONE) return;
+    if (ui->selected == (maage_client_ui_current(ui) == MAAGE_CLIENT_UI_SHADER_SETTINGS ? MAAGE_OPTIONS_SHADER_DONE : MAAGE_OPTIONS_VIDEO_DONE)) return;
     row = ui->selected / 2U;
     visible = maage_options_visible_rows(ui);
     if (row < (unsigned int) ui->video_first_row) ui->video_first_row = (int) row;
@@ -269,6 +273,32 @@ static void maage_options_action(maage_client_ui *ui, maage_client_ui_screen_id 
             ui->control_focus = 0;
             ui->route_result = maage_client_ui_open(ui, MAAGE_CLIENT_UI_CONTROLS);
         } else if (id == MAAGE_OPTIONS_MAIN_DONE) ui->route_result = maage_client_ui_back(ui);
+    } else if (screen == MAAGE_CLIENT_UI_SHADER_SETTINGS) {
+        if (id == MAAGE_OPTIONS_SHADER_DONE) ui->route_result = maage_client_ui_back(ui);
+        else if (id == 0U) ui->shaders_enabled = !ui->shaders_enabled;
+        else if (id == 1U) {
+            ui->shader_quality = ui->shader_quality >= 2 ? 0 : ui->shader_quality + 1;
+            maage_shader_settings_preset(&ui->shader_effects, ui->shader_quality);
+            ui->shader_exposure = 100;
+        } else if (id == 15U) {
+            ui->shader_exposure = ui->shader_exposure >= 200 ? 50 : ui->shader_exposure + 25;
+            ui->shader_quality = ui->shader_exposure == 100 ? maage_shader_settings_classify(&ui->shader_effects) : 3;
+        } else {
+            unsigned int control = id - 2U;
+            int value = maage_shader_setting_get(&ui->shader_effects, control), maximum = 1, step = 1;
+            if (control == MAAGE_SHADER_shadow_quality) maximum = 3;
+            else if (control == MAAGE_SHADER_light_quality || control == MAAGE_SHADER_ray_quality || control == MAAGE_SHADER_water_quality) maximum = 2;
+            else if (control == MAAGE_SHADER_wind) {
+                maximum = 100;
+                step = 10;
+            } else if (control == MAAGE_SHADER_shadow_distance) {
+                maximum = 256;
+                step = 16;
+            }
+            value = value + step > maximum ? (control == MAAGE_SHADER_shadow_distance ? 16 : 0) : value + step;
+            ui->route_result = maage_shader_setting_set(&ui->shader_effects, control, value);
+            ui->shader_quality = ui->shader_exposure == 100 ? maage_shader_settings_classify(&ui->shader_effects) : 3;
+        }
     } else if (screen == MAAGE_CLIENT_UI_LOD_SETTINGS) {
         if (id == 3U) ui->route_result = maage_client_ui_back(ui);
         else if (id == 0U) ui->lod_enabled = !ui->lod_enabled;
@@ -281,10 +311,10 @@ static void maage_options_action(maage_client_ui *ui, maage_client_ui_screen_id 
     } else {
         if (id == MAAGE_OPTIONS_VIDEO_DONE) ui->route_result = maage_client_ui_back(ui);
         else if (id == 1U || id == 3U || id == MAAGE_OPTIONS_VIDEO_FADE) maage_options_adjust(ui, screen, id, 1);
-        else if (id == 0U) ui->shaders_enabled = !ui->shaders_enabled;
-        else if (id == 2U) ui->shader_quality = (ui->shader_quality + 1) % 3;
-        else if (id == 8U) ui->shader_exposure = ui->shader_exposure >= 200 ? 50 : ui->shader_exposure + 25;
-        else if (id == 5U) ui->view_bobbing = !ui->view_bobbing;
+        else if (id == 0U) {
+            ui->video_first_row = 0;
+            ui->route_result = maage_client_ui_open(ui, MAAGE_CLIENT_UI_SHADER_SETTINGS);
+        } else if (id == 5U) ui->view_bobbing = !ui->view_bobbing;
         else if (id == 6U) maage_options_scale(ui, 1);
         else if (id == 10U) ui->route_result = maage_client_ui_open(ui, MAAGE_CLIENT_UI_LOD_SETTINGS);
         else if (id == 14U) ui->biome_blend = (ui->biome_blend + 1) % 5;
@@ -310,11 +340,11 @@ static unsigned int maage_options_input(maage_client_ui *ui, const maage_client_
     if (ui->mouse_x != ui->previous_mouse_x || ui->mouse_y != ui->previous_mouse_y || input->primary_pressed) ui->selected_keyboard = 0;
     if (input->previous) maage_options_focus_step(ui, screen, -1);
     if (input->next) maage_options_focus_step(ui, screen, 1);
-    if (screen == MAAGE_CLIENT_UI_VIDEO_SETTINGS) {
+    if (screen == MAAGE_CLIENT_UI_VIDEO_SETTINGS || screen == MAAGE_CLIENT_UI_SHADER_SETTINGS) {
         visible = maage_options_visible_rows(ui);
         if (input->scroll != 0.0) ui->selected_keyboard = 0;
         if (input->scroll > 0.0 && ui->video_first_row > 0) --ui->video_first_row;
-        if (input->scroll < 0.0 && (unsigned int) ui->video_first_row + visible < 9U) ++ui->video_first_row;
+        if (input->scroll < 0.0 && (unsigned int) ui->video_first_row + visible < (screen == MAAGE_CLIENT_UI_SHADER_SETTINGS ? 8U : 9U)) ++ui->video_first_row;
         if (input->previous || input->next) maage_options_scroll_selected(ui);
         hovered = maage_options_hover(ui, screen);
     }
@@ -397,14 +427,7 @@ static void maage_options_video_label(const maage_client_ui *ui, unsigned int id
     static const char *const leaves[3] = {"Fast", "Smart", "Fancy"};
     static const char *const modes[3] = {"Windowed", "Borderless", "Fullscreen"};
     const char *setting = id < 17U ? maage_video_unsupported[id] : "";
-    if (id == 0U) {
-        maage_render_capabilities capabilities;
-        maage_renderer_get_capabilities(ui->renderer, &capabilities);
-        sprintf(text, "Shaders: %s", capabilities.features & MAAGE_RENDER_CAP_NATIVE_SHADERS ? (ui->shaders_enabled ? (capabilities.features & MAAGE_RENDER_CAP_NATIVE_HDR ? "ON (HDR)" : "ON (SDR)") : "OFF") : "Unavailable");
-    } else if (id == 2U) {
-        static const char *const quality[] = {"Performance", "Balanced", "Cinematic"};
-        sprintf(text, "Shader Quality: %s", quality[ui->shader_quality]);
-    } else if (id == 8U) sprintf(text, "Exposure: %d%%", ui->shader_exposure);
+    if (id == 0U) strcpy(text, "Shaders...");
     else if (id == 10U) strcpy(text, "Level of Detail...");
     else if (id == 1U) sprintf(text, "Render Distance: %d chunk%s", ui->render_distance, ui->render_distance == 1 ? "" : "s");
     else if (id == 3U) {
@@ -430,22 +453,50 @@ static void maage_options_video_label(const maage_client_ui *ui, unsigned int id
         text[95] = 0;
     }
 }
+static void maage_options_shader_label(const maage_client_ui *ui, unsigned int id, char text[96]) {
+    static const char *const preset[] = {"Performance", "Balanced", "Cinematic", "Custom"};
+    static const char *const names[] = {"Dynamic Shadows", "Shadow Quality", "Shadow Distance", "Dynamic Lights", "Light Quality", "Waving Vegetation", "Wind Strength", "God Rays", "God Ray Quality", "Realistic Sky", "Realistic Water", "Water Quality", "Underwater Effects"};
+    static const char *const quality[] = {"Low", "Medium", "High", "Ultra"};
+    int value;
+    unsigned int control;
+    if (id == 0U) sprintf(text, "Shaders: %s", ui->shaders_enabled ? "ON" : "OFF");
+    else if (id == 1U) sprintf(text, "Shader Preset: %s", preset[ui->shader_quality]);
+    else if (id == 15U) sprintf(text, "Exposure: %d%%", ui->shader_exposure);
+    else if (id == MAAGE_OPTIONS_SHADER_DONE) strcpy(text, "Done");
+    else {
+        control = id - 2U;
+        value = maage_shader_setting_get(&ui->shader_effects, control);
+        if (control == MAAGE_SHADER_shadow_quality || control == MAAGE_SHADER_light_quality || control == MAAGE_SHADER_ray_quality || control == MAAGE_SHADER_water_quality) sprintf(text, "%s: %s", names[control], quality[value]);
+        else if (control == MAAGE_SHADER_shadow_distance) sprintf(text, "%s: %d blocks", names[control], value);
+        else if (control == MAAGE_SHADER_wind) sprintf(text, "%s: %d%%", names[control], value);
+        else sprintf(text, "%s: %s", names[control], value ? "ON" : "OFF");
+    }
+}
 static void maage_options_draw(maage_client_ui *ui, void *context) {
     maage_client_ui_screen_id screen = maage_client_ui_current(ui);
     unsigned int n, count = maage_options_count(screen), bus;
     maage_client_ui_rect r;
     char label[96];
-    float center = maage_options_center(ui), title_y = ui->content.y + (screen == MAAGE_CLIENT_UI_VIDEO_SETTINGS ? 5.0f : 15.0f);
+    float center = maage_options_center(ui), title_y = ui->content.y + (screen == MAAGE_CLIENT_UI_VIDEO_SETTINGS || screen == MAAGE_CLIENT_UI_SHADER_SETTINGS ? 5.0f : 15.0f);
     int highlight, enabled;
-    const char *title = screen == MAAGE_CLIENT_UI_OPTIONS ? "Options" : (screen == MAAGE_CLIENT_UI_VIDEO_SETTINGS ? "Video Settings" : (screen == MAAGE_CLIENT_UI_LOD_SETTINGS ? "Level of Detail" : "Music & Sounds"));
+    const char *title = screen == MAAGE_CLIENT_UI_SHADER_SETTINGS ? "Shaders" : screen == MAAGE_CLIENT_UI_OPTIONS ? "Options"
+                                                                                                                  : (screen == MAAGE_CLIENT_UI_VIDEO_SETTINGS ? "Video Settings" : (screen == MAAGE_CLIENT_UI_LOD_SETTINGS ? "Level of Detail" : "Music & Sounds"));
     (void) context;
     maage_client_ui_text_shadow(ui, title, center, title_y, MAAGE_CLIENT_UI_CENTER, 1, 1, 1);
+    if (screen == MAAGE_CLIENT_UI_SHADER_SETTINGS) {
+        maage_render_capabilities caps;
+        maage_renderer_get_capabilities(ui->renderer, &caps);
+        if (!(caps.features & MAAGE_RENDER_CAP_WORLD_EFFECTS)) maage_client_ui_text_shadow(ui, "World effects unavailable on this renderer", center, title_y + 10, MAAGE_CLIENT_UI_CENTER, 0.7f, 0.7f, 0.7f);
+    }
     for (n = 0; n < count; ++n) {
         r = maage_options_rect(ui, screen, n);
         if (r.width <= 0.0f || r.height <= 0.0f) continue;
         enabled = maage_options_enabled(ui, screen, n);
         highlight = enabled && (ui->selected_keyboard ? ui->selected == n : maage_options_contains(r, ui->mouse_x, ui->mouse_y));
-        if (screen == MAAGE_CLIENT_UI_OPTIONS) {
+        if (screen == MAAGE_CLIENT_UI_SHADER_SETTINGS) {
+            maage_options_shader_label(ui, n, label);
+            maage_client_ui_button_state(ui, r, label, !enabled ? MAAGE_CLIENT_UI_BUTTON_DISABLED : (highlight ? MAAGE_CLIENT_UI_BUTTON_HOVER : MAAGE_CLIENT_UI_BUTTON_NORMAL));
+        } else if (screen == MAAGE_CLIENT_UI_OPTIONS) {
             if (n == 0U) {
                 if (ui->fov_degrees == 70) strcpy(label, "FOV: Normal");
                 else if (ui->fov_degrees == 110) strcpy(label, "FOV: Quake Pro");
@@ -488,5 +539,6 @@ maage_status maage_client_ui_options_register(maage_client_ui *ui) {
     if (!maage_status_failed(result)) result = maage_client_ui_register_screen(ui, MAAGE_CLIENT_UI_SOUND_SETTINGS, maage_options_draw, maage_options_input, NULL);
     if (!maage_status_failed(result)) result = maage_client_ui_register_screen(ui, MAAGE_CLIENT_UI_VIDEO_SETTINGS, maage_options_draw, maage_options_input, NULL);
     if (!maage_status_failed(result)) result = maage_client_ui_register_screen(ui, MAAGE_CLIENT_UI_LOD_SETTINGS, maage_options_draw, maage_options_input, NULL);
+    if (!maage_status_failed(result)) result = maage_client_ui_register_screen(ui, MAAGE_CLIENT_UI_SHADER_SETTINGS, maage_options_draw, maage_options_input, NULL);
     return result;
 }

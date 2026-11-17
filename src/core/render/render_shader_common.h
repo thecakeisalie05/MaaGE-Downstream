@@ -19,7 +19,7 @@ float maage_shader_surface_material(float packed_surface) {
     return float(uint(packed_surface) % uint(MAAGE_MESH_MATERIAL_COUNT));
 }
 uint maage_shader_surface_rotation(float packed_surface) {
-    return uint(packed_surface) / uint(MAAGE_MESH_MATERIAL_COUNT);
+    return (uint(packed_surface) / uint(MAAGE_MESH_MATERIAL_COUNT)) & 7u;
 }
 
 MAAGE_SHADER_VEC2 maage_shader_tile_uv(MAAGE_SHADER_VEC2 uv, MAAGE_SHADER_VEC4 tile, MAAGE_SHADER_VEC3 world_position, uint rotation_face) {

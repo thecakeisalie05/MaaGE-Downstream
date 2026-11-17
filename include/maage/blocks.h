@@ -136,6 +136,7 @@ typedef struct maage_block_definition {
     int opaque;
     int falls;                         /* Eligible payload for the shared falling-entity mechanism. */
     int material_solid;                /* Plant adjacency rule; independent of collision. */
+    float emission_color[3];           /* Linear RGB; all-zero selects the warm presentation default. */
     unsigned int emitted_light;        /* 0..15; resolved during registration. */
     unsigned int light_opacity;        /* 0..15; independent of face occlusion. */
     int use_neighbor_brightness;       /* Combined light uses up and four sides. */
@@ -172,6 +173,7 @@ typedef struct maage_block_definition {
     maage_status (*support_lost)(struct maage_world *, int, int, int, const struct maage_block_state_definition *);
     maage_status (*import_state)(const maage_block_registry *, const struct maage_block_state_definition *, maage_block_state_id *);
     maage_sound_material_id material;
+    unsigned int shader_wind; /* 0 infer mesh/foliage category, 1 rooted flexible plants, 2 canopy. */
     unsigned int mesh_material, foliage, snow_cover, flow_permeable;
     unsigned int mesh_inset, cull_same;
     maage_tag_id tool_wear_class, special_tool_class;

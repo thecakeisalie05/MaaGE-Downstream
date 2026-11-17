@@ -50,6 +50,10 @@ struct maage_renderer {
     float foreground_light[2], animation_tick;
     int refresh;
     int shaders_enabled, shader_quality;
+    const maage_render_mesh *const *shadow_casters;
+    size_t shadow_caster_count;
+    maage_shader_settings effects;
+    maage_shader_frame effect_frame;
     float shader_exposure;
     maage_status failure;
     /* Borrowed only during a synchronous backend call; always cleared before
