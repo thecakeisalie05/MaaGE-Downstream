@@ -119,6 +119,29 @@ MAAGE_SHADER_VEC4 maage_shader_ui_position(MAAGE_SHADER_VEC2 position, MAAGE_SHA
     MAAGE_SHADER_VEC2 point = position / logical_size;
     return MAAGE_SHADER_VEC4((point.x * 2.0 - 1.0) * depth, (1.0 - point.y * 2.0) * depth, 0.0, depth);
 }
+MAAGE_SHADER_VEC3 maage_shader_srgb_decode(MAAGE_SHADER_VEC3 display) {
+    MAAGE_SHADER_VEC3 low = display / 12.92;
+    MAAGE_SHADER_VEC3 high = pow(max((display + 0.055) / 1.055, MAAGE_SHADER_VEC3(0.0)), MAAGE_SHADER_VEC3(2.4));
+    return mix(low, high, step(MAAGE_SHADER_VEC3(0.04045), display));
+}
+MAAGE_SHADER_VEC3 maage_shader_srgb_encode(MAAGE_SHADER_VEC3 linear) {
+    MAAGE_SHADER_VEC3 low = linear * 12.92;
+    MAAGE_SHADER_VEC3 high = 1.055 * pow(max(linear, MAAGE_SHADER_VEC3(0.0)), MAAGE_SHADER_VEC3(1.0 / 2.4)) - 0.055;
+    return mix(low, high, step(MAAGE_SHADER_VEC3(0.0031308), linear));
+}
+/* A genuine floating-point scene stays linear through blending and exposure.
+ * The bounded SDR fallback decodes only for grading, with no claim to HDR.
+ * This monotonic rational toe/shoulder compresses exposed HDR highlights. */
+MAAGE_SHADER_VEC3 maage_shader_scene_color(MAAGE_SHADER_VEC3 input_color, float exposure, float quality, bool hdr) {
+    MAAGE_SHADER_VEC3 linear = hdr ? input_color : maage_shader_srgb_decode(input_color);
+    linear *= exposure;
+    if (hdr) linear = (linear * (2.0 * linear + 0.05)) / (linear * (2.0 * linear + 0.6) + 0.08);
+    float luma = dot(linear, MAAGE_SHADER_VEC3(0.2126, 0.7152, 0.0722));
+    linear = mix(MAAGE_SHADER_VEC3(luma), linear, 1.0 + quality * 0.015);
+    linear = MAAGE_SHADER_SATURATE(linear);
+    linear = mix(linear, linear * linear * (3.0 - 2.0 * linear), quality * 0.035);
+    return maage_shader_srgb_encode(linear);
+}
 MAAGE_SHADER_VEC2 maage_shader_fullscreen_uv(int index) {
     return MAAGE_SHADER_VEC2(float((index << 1) & 2), float(index & 2));
 }

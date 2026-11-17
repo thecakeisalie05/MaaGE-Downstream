@@ -49,6 +49,8 @@ struct maage_renderer {
     float foreground_matrix[16];
     float foreground_light[2], animation_tick;
     int refresh;
+    int shaders_enabled, shader_quality;
+    float shader_exposure;
     maage_status failure;
     /* Borrowed only during a synchronous backend call; always cleared before
      * returning to the caller. Backends never retain it in GPU work. */

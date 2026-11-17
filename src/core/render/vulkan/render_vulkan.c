@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <math.h>
+#include "maage/log.h"
 
 #define MAAGE_VULKAN_OK MAAGE_STATUS_VALUE(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_PRESENT, 0)
 #define MAAGE_VULKAN_ERROR(code) MAAGE_STATUS_VALUE(code, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPLOAD, 0)
@@ -46,8 +48,8 @@ typedef struct maage_vulkan_garbage {
 } maage_vulkan_garbage;
 typedef struct maage_vulkan_frame_data {
     maage_vulkan_buffer vertices[3], indices[3];
-    maage_vulkan_image scene, depth, panorama[2];
-    VkFramebuffer scene_framebuffer, panorama_framebuffer[2];
+    maage_vulkan_image scene, world, depth, panorama[2];
+    VkFramebuffer scene_framebuffer, world_framebuffer, panorama_framebuffer[2];
     VkCommandBuffer upload;
     maage_vulkan_garbage *staging;
     uint64_t serial;
@@ -56,8 +58,10 @@ typedef struct maage_vulkan_rendering {
     VkDescriptorSetLayout descriptors, surface_descriptors;
     VkPipelineLayout layout;
     VkSampler nearest, linear;
-    VkRenderPass scene_pass, color_pass, present_pass;
-    VkPipeline mesh[3], ui[3], panorama_ui[3], blur, scene_composite, composite;
+    VkRenderPass scene_pass, world_pass, color_pass, present_pass;
+    VkPipeline mesh[3], ui[3], world_mesh[3], world_ui[3], panorama_ui[3], blur, scene_composite, composite;
+    int hdr, world_hdr_active;
+    VkImageFormatProperties hdr_limits;
     VkFramebuffer *present_framebuffers;
     VkCommandPool upload_pool;
     VkCommandBuffer upload;
@@ -500,7 +504,10 @@ static maage_status maage_vulkan_pipeline(maage_renderer *renderer, VkRenderPass
     VkDynamicState dynamics[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkGraphicsPipelineCreateInfo info = {0};
     VkSpecializationMapEntry entry = {0, 0, sizeof(uint32_t)};
-    uint32_t srgb = output_srgb != 0;
+    uint32_t srgb = output_srgb == 1;
+    uint32_t linear = output_srgb == 2;
+    VkSpecializationMapEntry linear_entry = {1, 0, sizeof(uint32_t)};
+    VkSpecializationInfo linear_specialization = {1, &linear_entry, sizeof(linear), &linear};
     VkSpecializationInfo specialization = {1, &entry, sizeof(srgb), &srgb};
     static const VkBlendFactor factors[] = {
         VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
@@ -528,7 +535,7 @@ static maage_status maage_vulkan_pipeline(maage_renderer *renderer, VkRenderPass
         stages[index].module = modules[index];
         stages[index].pName = "main";
     }
-    if (fullscreen) stages[1].pSpecializationInfo = &specialization;
+    stages[1].pSpecializationInfo = fullscreen ? &specialization : &linear_specialization;
     binding.stride = ui ? sizeof(maage_render_ui_gpu_vertex) : sizeof(maage_render_gpu_mesh_vertex);
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
     {
@@ -623,6 +630,9 @@ void maage_vulkan_targets_destroy(maage_renderer *renderer) {
         maage_vulkan_frame_data *frame = &gpu->frames[slot];
         if (frame->scene_framebuffer) vkDestroyFramebuffer(native->device, frame->scene_framebuffer, NULL);
         frame->scene_framebuffer = VK_NULL_HANDLE;
+        if (frame->world_framebuffer) vkDestroyFramebuffer(native->device, frame->world_framebuffer, NULL);
+        frame->world_framebuffer = VK_NULL_HANDLE;
+        maage_vulkan_image_destroy(native, &frame->world);
         maage_vulkan_image_destroy(native, &frame->scene);
         maage_vulkan_image_destroy(native, &frame->depth);
         for (unsigned int index = 0; index < 2; ++index) {
@@ -636,6 +646,9 @@ void maage_vulkan_targets_destroy(maage_renderer *renderer) {
 static void maage_vulkan_pipelines_destroy(maage_vulkan_renderer *native) {
     maage_vulkan_rendering *gpu = native->rendering;
     for (unsigned int index = 0; index < 3; ++index) {
+        if (gpu->world_mesh[index]) vkDestroyPipeline(native->device, gpu->world_mesh[index], NULL);
+        if (gpu->world_ui[index]) vkDestroyPipeline(native->device, gpu->world_ui[index], NULL);
+        gpu->world_mesh[index] = gpu->world_ui[index] = VK_NULL_HANDLE;
         if (gpu->mesh[index]) vkDestroyPipeline(native->device, gpu->mesh[index], NULL);
         gpu->mesh[index] = VK_NULL_HANDLE;
     }
@@ -648,6 +661,8 @@ static void maage_vulkan_pipelines_destroy(maage_vulkan_renderer *native) {
     if (gpu->scene_composite) vkDestroyPipeline(native->device, gpu->scene_composite, NULL);
     if (gpu->composite) vkDestroyPipeline(native->device, gpu->composite, NULL);
     gpu->blur = gpu->scene_composite = gpu->composite = VK_NULL_HANDLE;
+    if (gpu->world_pass) vkDestroyRenderPass(native->device, gpu->world_pass, NULL);
+    gpu->world_pass = VK_NULL_HANDLE;
     if (gpu->scene_pass) vkDestroyRenderPass(native->device, gpu->scene_pass, NULL);
     if (gpu->color_pass) vkDestroyRenderPass(native->device, gpu->color_pass, NULL);
     if (gpu->present_pass) vkDestroyRenderPass(native->device, gpu->present_pass, NULL);
@@ -658,11 +673,26 @@ static maage_status maage_vulkan_targets_create(maage_renderer *renderer) {
     maage_vulkan_renderer *native = renderer->platform;
     maage_vulkan_rendering *gpu = native->rendering;
     VkFramebufferCreateInfo framebuffer = {0};
+    VkFormatProperties scene_properties;
     int srgb = native->format == VK_FORMAT_B8G8R8A8_SRGB || native->format == VK_FORMAT_R8G8B8A8_SRGB;
     if (gpu->generation == native->generation) return MAAGE_VULKAN_OK;
+    if (gpu->hdr && (native->extent.width > gpu->hdr_limits.maxExtent.width || native->extent.height > gpu->hdr_limits.maxExtent.height || (VkDeviceSize) native->extent.width * native->extent.height * 8U > gpu->hdr_limits.maxResourceSize)) {
+        gpu->hdr = 0;
+        renderer->capabilities.features &= ~MAAGE_RENDER_CAP_NATIVE_HDR;
+        maage_log_warning("maage.client.render", "Native shaders use SDR: framebuffer exceeds validated RGBA16F image limits.");
+    }
+    vkGetPhysicalDeviceFormatProperties(native->physical, VK_FORMAT_R8G8B8A8_UNORM, &scene_properties);
+    if ((scene_properties.optimalTilingFeatures & (VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) != (VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) return MAAGE_VULKAN_ERROR(MAAGE_STATUS_SYSTEM_NOT_SUPPORTED);
     if (gpu->pipeline_format != native->format) {
         maage_vulkan_pipelines_destroy(native);
         MAAGE_VULKAN_TRY(maage_vulkan_render_pass(renderer, VK_FORMAT_R8G8B8A8_UNORM, 1, 0, &gpu->scene_pass));
+        if (gpu->hdr) {
+            MAAGE_VULKAN_TRY(maage_vulkan_render_pass(renderer, VK_FORMAT_R16G16B16A16_SFLOAT, 1, 0, &gpu->world_pass));
+            for (unsigned int index = 0; index < 3; ++index) {
+                MAAGE_VULKAN_TRY(maage_vulkan_pipeline(renderer, gpu->world_pass, index, 2, &gpu->world_mesh[index]));
+                MAAGE_VULKAN_TRY(maage_vulkan_pipeline(renderer, gpu->world_pass, index + MAAGE_RENDER_UI, 2, &gpu->world_ui[index]));
+            }
+        }
         MAAGE_VULKAN_TRY(maage_vulkan_render_pass(renderer, VK_FORMAT_R8G8B8A8_UNORM, 0, 0, &gpu->color_pass));
         MAAGE_VULKAN_TRY(maage_vulkan_render_pass(renderer, native->format, 0, 1, &gpu->present_pass));
         for (unsigned int index = 0; index < 3; ++index)
@@ -691,7 +721,7 @@ static maage_status maage_vulkan_targets_create(maage_renderer *renderer) {
     gpu->generation = native->generation;
     return MAAGE_VULKAN_OK;
 }
-static maage_status maage_vulkan_frame_targets(maage_renderer *renderer, maage_vulkan_frame_data *frame, int panorama) {
+static maage_status maage_vulkan_frame_targets(maage_renderer *renderer, maage_vulkan_frame_data *frame, int panorama, int hdr) {
     maage_vulkan_renderer *native = renderer->platform;
     maage_vulkan_rendering *gpu = native->rendering;
     VkFramebufferCreateInfo framebuffer = {0};
@@ -711,8 +741,19 @@ static maage_status maage_vulkan_frame_targets(maage_renderer *renderer, maage_v
         framebuffer.pAttachments = attachments;
         MAAGE_VULKAN_TRY(maage_vulkan_result(vkCreateFramebuffer(native->device, &framebuffer, NULL, &frame->scene_framebuffer)));
     }
-    if (panorama && !frame->panorama[0].image) {
-        for (unsigned int index = 0; index < 2; ++index) {
+    if (hdr && !frame->world.image) {
+        MAAGE_VULKAN_TRY(maage_vulkan_image_create(renderer, native->extent.width, native->extent.height, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT, &frame->world));
+        MAAGE_VULKAN_TRY(maage_vulkan_descriptor(renderer, &frame->world, gpu->nearest));
+        attachments[0] = frame->world.view;
+        attachments[1] = frame->depth.view;
+        framebuffer.renderPass = gpu->world_pass;
+        framebuffer.attachmentCount = 2;
+        framebuffer.pAttachments = attachments;
+        MAAGE_VULKAN_TRY(maage_vulkan_result(vkCreateFramebuffer(native->device, &framebuffer, NULL, &frame->world_framebuffer)));
+    }
+    if (panorama) {
+        for (unsigned int index = 0; index < (unsigned int) panorama; ++index) {
+            if (frame->panorama[index].image) continue;
             MAAGE_VULKAN_TRY(maage_vulkan_image_create(renderer, native->extent.width, native->extent.height, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT, &frame->panorama[index]));
             MAAGE_VULKAN_TRY(maage_vulkan_descriptor(renderer, &frame->panorama[index], gpu->linear));
             framebuffer.renderPass = gpu->color_pass;
@@ -750,7 +791,7 @@ static void maage_vulkan_pass_begin(maage_renderer *renderer, VkCommandBuffer co
     begin.renderPass = pass;
     begin.framebuffer = framebuffer;
     begin.renderArea = scissor;
-    begin.clearValueCount = pass == ((maage_vulkan_rendering *) native->rendering)->scene_pass ? 2 : 1;
+    begin.clearValueCount = pass == ((maage_vulkan_rendering *) native->rendering)->scene_pass || pass == ((maage_vulkan_rendering *) native->rendering)->world_pass ? 2 : 1;
     begin.pClearValues = clear;
     vkCmdBeginRenderPass(command, &begin, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdSetViewport(command, 0, 1, &viewport);
@@ -790,7 +831,7 @@ static void maage_vulkan_mesh_draw(maage_vulkan_renderer *native, VkCommandBuffe
     size_t first, count = maage_render_geometry_range(&mesh->geometry, layer, &first);
     VkDeviceSize offset = 0;
     if (!count) return;
-    maage_vulkan_bind(native, command, gpu->mesh[layer], texture->descriptor, push);
+    maage_vulkan_bind(native, command, (gpu->world_hdr_active ? gpu->world_mesh[layer] : gpu->mesh[layer]), texture->descriptor, push);
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, ((maage_vulkan_rendering *) native->rendering)->layout, 1, 1, &geometry->surface_descriptor.descriptor, 0, NULL);
     vkCmdBindVertexBuffers(command, 0, 1, &geometry->vertices.buffer, &offset);
     maage_vulkan_indices(native, command, layer == MAAGE_RENDER_TRANSLUCENT ? geometry->sorted[slot].buffer : geometry->indices.buffer, first, count, layer == MAAGE_RENDER_TRANSLUCENT ? sizeof(unsigned int) : maage_render_gpu_mesh_index_bytes(mesh));
@@ -805,7 +846,7 @@ static void maage_vulkan_mesh_passes(maage_vulkan_renderer *native, VkCommandBuf
             maage_vulkan_mesh *geometry = mesh->platform;
             maage_vulkan_image *texture = mesh->texture->platform;
             VkDeviceSize offset = 0;
-            maage_vulkan_bind(native, command, ((maage_vulkan_rendering *) native->rendering)->mesh[cursor.layer], texture->descriptor, &uniforms);
+            maage_vulkan_bind(native, command, (((maage_vulkan_rendering *) native->rendering)->world_hdr_active ? ((maage_vulkan_rendering *) native->rendering)->world_mesh[cursor.layer] : ((maage_vulkan_rendering *) native->rendering)->mesh[cursor.layer]), texture->descriptor, &uniforms);
             vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, ((maage_vulkan_rendering *) native->rendering)->layout, 1, 1, &geometry->surface_descriptor.descriptor, 0, NULL);
             vkCmdBindVertexBuffers(command, 0, 1, &geometry->vertices.buffer, &offset);
             maage_vulkan_indices(native, command, cursor.instance ? geometry->indices.buffer : geometry->sorted[slot].buffer, cursor.triangle, cursor.count, cursor.instance ? maage_render_gpu_mesh_index_bytes(mesh) : sizeof(unsigned int));
@@ -834,7 +875,7 @@ static void maage_vulkan_ui_draw(maage_vulkan_renderer *native, VkCommandBuffer 
     maage_render_ui_uniforms(batch, &push);
     vkCmdBindVertexBuffers(command, 0, 1, &frame->vertices[layer].buffer, &offset);
     for (n = 0; n < segment_count; ++n) {
-        maage_vulkan_bind(native, command, panorama ? gpu->panorama_ui[MAAGE_RENDER_BLEND_ALPHA] : gpu->ui[segments[n].blend], texture->descriptor, &push);
+        maage_vulkan_bind(native, command, panorama ? gpu->panorama_ui[MAAGE_RENDER_BLEND_ALPHA] : (gpu->world_hdr_active ? gpu->world_ui[segments[n].blend] : gpu->ui[segments[n].blend]), texture->descriptor, &push);
         maage_vulkan_indices(native, command, frame->indices[layer].buffer, segments[n].first, segments[n].count, sizeof(unsigned int));
     }
 }
@@ -843,7 +884,7 @@ static void maage_vulkan_fullscreen(maage_vulkan_renderer *native, VkCommandBuff
     push.parameters[0] = x;
     push.parameters[1] = y;
     push.parameters[2] = (float) MAAGE_RENDER_BLUR_SIGMA;
-    push.parameters[3] = blur ? MAAGE_RENDER_BLUR_RADIUS : 0;
+    push.parameters[3] = blur < 0 ? (float) blur : (blur ? MAAGE_RENDER_BLUR_RADIUS : 0);
     maage_vulkan_bind(native, command, pipeline, source->descriptor, &push);
     vkCmdDraw(command, 3, 1, 0, 0);
 }
@@ -885,7 +926,8 @@ static maage_status maage_vulkan_render_frame(maage_renderer *renderer, const ma
     if (maage_status_failed(result)) goto failed;
     result = maage_vulkan_targets_create(renderer);
     if (maage_status_failed(result)) goto failed;
-    result = maage_vulkan_frame_targets(renderer, frame, plan->panorama_count != 0);
+    gpu->world_hdr_active = plan->shaders_enabled && gpu->hdr;
+    result = maage_vulkan_frame_targets(renderer, frame, plan->panorama_count ? 2 : (plan->shaders_enabled && !gpu->hdr ? 1 : 0), gpu->world_hdr_active);
     if (maage_status_failed(result)) goto failed;
     for (unsigned int layer = 0; layer < 3; ++layer) {
         result = maage_vulkan_ui_prepare(renderer, frame, layer, plan->layers[layer]);
@@ -900,13 +942,18 @@ static maage_status maage_vulkan_render_frame(maage_renderer *renderer, const ma
         result = maage_vulkan_sort(renderer, plan->foreground, plan->hand.matrix, slot);
         if (maage_status_failed(result)) goto failed;
     }
-    maage_vulkan_transition(native, flight->command, frame->scene.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-    maage_vulkan_pass_begin(renderer, flight->command, gpu->scene_pass, frame->scene_framebuffer);
+    maage_vulkan_transition(native, flight->command, gpu->world_hdr_active ? frame->world.image : frame->scene.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+    maage_vulkan_pass_begin(renderer, flight->command, gpu->world_hdr_active ? gpu->world_pass : gpu->scene_pass, gpu->world_hdr_active ? frame->world_framebuffer : frame->scene_framebuffer);
     {
         VkClearAttachment clear = {0};
         VkClearRect rect = {{{0, 0}, native->extent}, 0, 1};
         clear.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         memcpy(clear.clearValue.color.float32, renderer->clear, sizeof(renderer->clear));
+        if (gpu->world_hdr_active)
+            for (unsigned int component = 0; component < 3; ++component) {
+                double value = renderer->clear[component];
+                clear.clearValue.color.float32[component] = (float) (value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4));
+            }
         vkCmdClearAttachments(flight->command, 1, &clear, 1, &rect);
     }
     maage_vulkan_ui_draw(native, flight->command, frame, 0, plan->layers[0], 0, plan->layers[0] ? plan->layers[0]->index_count : 0, 0);
@@ -922,6 +969,25 @@ static maage_status maage_vulkan_render_frame(maage_renderer *renderer, const ma
         maage_vulkan_pass_begin(renderer, flight->command, gpu->color_pass, frame->panorama_framebuffer[0]);
         maage_vulkan_fullscreen(native, flight->command, gpu->blur, &frame->panorama[1], 0, 1.0f / native->extent.height, 1);
         vkCmdEndRenderPass(flight->command);
+        maage_vulkan_pass_begin(renderer, flight->command, gpu->scene_pass, frame->scene_framebuffer);
+        maage_vulkan_fullscreen(native, flight->command, gpu->scene_composite, &frame->panorama[0], 0, 0, 0);
+    }
+    if (gpu->world_hdr_active) {
+        vkCmdEndRenderPass(flight->command);
+        gpu->world_hdr_active = 0;
+        maage_vulkan_transition(native, flight->command, frame->world.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        maage_vulkan_transition(native, flight->command, frame->scene.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        maage_vulkan_pass_begin(renderer, flight->command, gpu->scene_pass, frame->scene_framebuffer);
+        maage_vulkan_fullscreen(native, flight->command, gpu->scene_composite, &frame->world, plan->shader_exposure, plan->shader_quality, -2);
+    } else if (plan->shaders_enabled) {
+        /* Each frame slot owns both images. Never sample an active attachment.
+         * Finish world translucency before processing; overlays/hand/HUD follow. */
+        vkCmdEndRenderPass(flight->command);
+        maage_vulkan_transition(native, flight->command, frame->scene.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        maage_vulkan_pass_begin(renderer, flight->command, gpu->color_pass, frame->panorama_framebuffer[0]);
+        maage_vulkan_fullscreen(native, flight->command, gpu->blur, &frame->scene, plan->shader_exposure, plan->shader_quality, -1);
+        vkCmdEndRenderPass(flight->command);
+        maage_vulkan_transition(native, flight->command, frame->scene.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
         maage_vulkan_pass_begin(renderer, flight->command, gpu->scene_pass, frame->scene_framebuffer);
         maage_vulkan_fullscreen(native, flight->command, gpu->scene_composite, &frame->panorama[0], 0, 0, 0);
     }
@@ -1009,7 +1075,15 @@ static maage_status maage_vulkan_create(maage_renderer *renderer) {
     pool.queueFamilyIndex = native->graphics_family;
     pool.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     MAAGE_VULKAN_TRY(maage_vulkan_result(vkCreateCommandPool(native->device, &pool, NULL, &gpu->upload_pool)));
-    renderer->capabilities.features |= MAAGE_RENDER_CAP_SHADERS | MAAGE_RENDER_CAP_VERTEX_BUFFERS | MAAGE_RENDER_CAP_INDEX_BUFFERS | MAAGE_RENDER_CAP_RENDER_TARGETS | MAAGE_RENDER_CAP_DEPTH | MAAGE_RENDER_CAP_TEXTURED_MESH | MAAGE_RENDER_CAP_UI | MAAGE_RENDER_CAP_SCENE | MAAGE_RENDER_CAP_FOG;
+    renderer->capabilities.features |= MAAGE_RENDER_CAP_SHADERS | MAAGE_RENDER_CAP_VERTEX_BUFFERS | MAAGE_RENDER_CAP_INDEX_BUFFERS | MAAGE_RENDER_CAP_RENDER_TARGETS | MAAGE_RENDER_CAP_DEPTH | MAAGE_RENDER_CAP_TEXTURED_MESH | MAAGE_RENDER_CAP_UI | MAAGE_RENDER_CAP_SCENE | MAAGE_RENDER_CAP_FOG | MAAGE_RENDER_CAP_NATIVE_SHADERS;
+    {
+        VkFormatProperties format;
+        VkFormatFeatureFlags required = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+        vkGetPhysicalDeviceFormatProperties(native->physical, VK_FORMAT_R16G16B16A16_SFLOAT, &format);
+        gpu->hdr = (format.optimalTilingFeatures & required) == required && vkGetPhysicalDeviceImageFormatProperties(native->physical, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 0, &gpu->hdr_limits) == VK_SUCCESS && (gpu->hdr_limits.sampleCounts & VK_SAMPLE_COUNT_1_BIT);
+        if (gpu->hdr) renderer->capabilities.features |= MAAGE_RENDER_CAP_NATIVE_HDR;
+        maage_log_info("maage.client.render", "Native shaders: %s; foreground/GUI remain display-referred.", gpu->hdr ? "linear RGBA16F world and filmic tone mapping" : "RGBA8 SDR fallback (floating-point attachment/blend/sample unsupported)");
+    }
     renderer->capabilities.texture_formats = MAAGE_RENDER_FORMAT_RGBA8;
     renderer->capabilities.max_frames_in_flight = MAAGE_VULKAN_FRAME_SLOTS;
     return MAAGE_VULKAN_OK;

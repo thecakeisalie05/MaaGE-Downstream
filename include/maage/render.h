@@ -47,6 +47,8 @@ typedef struct maage_render_desc {
 #define MAAGE_RENDER_CAP_UI 0x2000UL
 #define MAAGE_RENDER_CAP_SCENE 0x4000UL
 #define MAAGE_RENDER_CAP_FOG 0x8000UL
+#define MAAGE_RENDER_CAP_NATIVE_SHADERS 0x10000UL
+#define MAAGE_RENDER_CAP_NATIVE_HDR 0x20000UL
 #define MAAGE_RENDER_FORMAT_RGBA8 0x01UL
 #define MAAGE_RENDER_FORMAT_BGRA8 0x02UL
 #define MAAGE_RENDER_SYNC_CPU_WAIT 0x01UL
@@ -136,6 +138,11 @@ maage_status maage_renderer_set_clear_color(maage_renderer *renderer, float red,
  * Optional screen batches draw behind geometry and before the main UI. Borrow
  * data/textures through subsequent draw_frame calls; clear before destruction.
  * Implemented mesh/UI backends only; others return UNSUPPORTED. */
+/* Native world-only processing. HDR capability selects linear scene/filmic
+ * mapping; otherwise explicit SDR grading. Exposure is linear 0.25..4; quality 0..2
+ * selects restrained color/contrast strength. Unsupported backends reject ON.
+ * OFF adds no postprocess pass. Foreground, screen overlays and GUI are excluded. */
+maage_status maage_renderer_set_native_shaders(maage_renderer *renderer, int enabled, int quality, float exposure);
 /* Constant unlit floor for dimensions without celestial daylight; zero disables. */
 maage_status maage_renderer_set_ambient_light(maage_renderer *, float);
 maage_status maage_renderer_set_scene(maage_renderer *renderer, float sky_light, const maage_render_ui_data *background, const maage_render_ui_data *overlay);

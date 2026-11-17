@@ -27,6 +27,7 @@ void main()
         }
     }
     color /= total;
+    if (maage.parameters.w < 0.0) color.rgb = maage_shader_scene_color(color.rgb, maage.parameters.x, maage.parameters.y, maage.parameters.w < -1.5);
     /* Scene blending uses UNORM, as Metal does. A final sRGB attachment must
      * encode these display values exactly once, after all composition. */
     if (maage_output_srgb != 0) {

@@ -238,6 +238,14 @@ maage_status maage_renderer_set_clear_color(maage_renderer *renderer, float red,
     renderer->clear[3] = alpha;
     return MAAGE_STATUS_VALUE(MAAGE_STATUS_SUCCESS, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
 }
+maage_status maage_renderer_set_native_shaders(maage_renderer *renderer, int enabled, int quality, float exposure) {
+    if (!renderer || (enabled != 0 && enabled != 1) || quality < 0 || quality > 2 || !(exposure >= 0.25f && exposure <= 4.0f)) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPDATE, 0);
+    if (enabled && !(renderer->capabilities.features & MAAGE_RENDER_CAP_NATIVE_SHADERS)) return maage_status_make(MAAGE_STATUS_NOT_IMPLEMENTED, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPDATE, 0);
+    renderer->shaders_enabled = enabled;
+    renderer->shader_quality = quality;
+    renderer->shader_exposure = exposure;
+    return maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_UPDATE, 0);
+}
 maage_status maage_renderer_set_ambient_light(maage_renderer *renderer, float level) {
     if (!renderer || !(level >= 0 && level <= 1)) return MAAGE_STATUS_VALUE(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);
     if (level > 0 && !(renderer->capabilities.features & MAAGE_RENDER_CAP_SCENE)) return MAAGE_STATUS_VALUE(MAAGE_STATUS_NOT_IMPLEMENTED, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_SET, 0);

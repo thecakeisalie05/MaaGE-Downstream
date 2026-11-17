@@ -30,6 +30,7 @@ typedef struct maage_metal_renderer {
     id<MTLCommandBuffer> frames[MAAGE_METAL_FRAME_SLOTS];
     id<MTLTexture> colors[MAAGE_METAL_FRAME_SLOTS];
     /* Per-slot targets never overwrite in-flight GPU work. */
+    id<MTLTexture> world_source[MAAGE_METAL_FRAME_SLOTS];
     id<MTLTexture> panorama_source[MAAGE_METAL_FRAME_SLOTS];
     id<MTLTexture> panorama_blurred[MAAGE_METAL_FRAME_SLOTS];
     MPSImageGaussianBlur *panorama_filter;
@@ -234,7 +235,7 @@ static maage_status maage_metal_compile_pipeline(maage_renderer *renderer, id<MT
     int ui = state->ui || state->fullscreen;
     *output = nil;
     vertex = [library newFunctionWithName:state->fullscreen ? @"maage_fullscreen_vertex_shader" : (ui ? @"maage_ui_vertex_shader" : @"maage_mesh_vertex_shader")];
-    fragment = [library newFunctionWithName:ui ? @"maage_ui_fragment_shader" : @"maage_mesh_fragment_shader"];
+    fragment = [library newFunctionWithName:state->fullscreen ? @"maage_fullscreen_fragment_shader" : (ui ? @"maage_ui_fragment_shader" : @"maage_mesh_fragment_shader")];
     pipeline = [[MTLRenderPipelineDescriptor alloc] init];
     pipeline.vertexFunction = vertex;
     pipeline.fragmentFunction = fragment;
@@ -339,7 +340,7 @@ static maage_status maage_metal_create(maage_renderer *renderer) {
     [native->view setLayer:native->layer];
     [native->view setWantsLayer:YES];
     native->installed = 1;
-    renderer->capabilities.features |= MAAGE_RENDER_CAP_SHADERS | MAAGE_RENDER_CAP_VERTEX_BUFFERS | MAAGE_RENDER_CAP_INDEX_BUFFERS | MAAGE_RENDER_CAP_RENDER_TARGETS | MAAGE_RENDER_CAP_DEPTH | MAAGE_RENDER_CAP_STENCIL | MAAGE_RENDER_CAP_INSTANCING | MAAGE_RENDER_CAP_COMPUTE | MAAGE_RENDER_CAP_TEXTURED_MESH | MAAGE_RENDER_CAP_UI | MAAGE_RENDER_CAP_SCENE | MAAGE_RENDER_CAP_FOG;
+    renderer->capabilities.features |= MAAGE_RENDER_CAP_SHADERS | MAAGE_RENDER_CAP_VERTEX_BUFFERS | MAAGE_RENDER_CAP_INDEX_BUFFERS | MAAGE_RENDER_CAP_RENDER_TARGETS | MAAGE_RENDER_CAP_DEPTH | MAAGE_RENDER_CAP_STENCIL | MAAGE_RENDER_CAP_INSTANCING | MAAGE_RENDER_CAP_COMPUTE | MAAGE_RENDER_CAP_TEXTURED_MESH | MAAGE_RENDER_CAP_UI | MAAGE_RENDER_CAP_SCENE | MAAGE_RENDER_CAP_FOG | MAAGE_RENDER_CAP_NATIVE_SHADERS;
     renderer->capabilities.texture_formats = MAAGE_RENDER_FORMAT_RGBA8 | MAAGE_RENDER_FORMAT_BGRA8;
     renderer->capabilities.synchronization = MAAGE_RENDER_SYNC_CPU_WAIT;
     renderer->capabilities.max_frames_in_flight = MAAGE_METAL_FRAME_SLOTS;
@@ -398,6 +399,7 @@ static maage_status maage_metal_destroy(maage_renderer *renderer) {
             }
         }
         [native->colors[slot] release];
+        [native->world_source[slot] release];
         [native->panorama_source[slot] release];
         [native->panorama_blurred[slot] release];
     }
@@ -523,7 +525,7 @@ static maage_status maage_metal_frame(maage_renderer *renderer, const maage_wind
     NSWindow *window = renderer->native.handles.cocoa.window;
     NSAutoreleasePool *pool;
     id<CAMetalDrawable> drawable;
-    id<MTLTexture> color;
+    id<MTLTexture> color, scene_output;
     id<MTLCommandBuffer> command;
     id<MTLRenderCommandEncoder> encoder;
     MTLRenderPassDescriptor *pass;
@@ -722,6 +724,24 @@ static maage_status maage_metal_frame(maage_renderer *renderer, const maage_wind
             return result;
         }
     }
+    scene_output = color;
+    if (plan->shaders_enabled) {
+        if (!native->world_source[slot] || native->world_source[slot].width != color.width || native->world_source[slot].height != color.height) {
+            MTLTextureDescriptor *description = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:color.width height:color.height mipmapped:NO];
+            description.storageMode = MTLStorageModePrivate;
+            description.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+            [native->world_source[slot] release];
+            native->world_source[slot] = [native->device newTextureWithDescriptor:description];
+            if (!native->world_source[slot]) {
+                [pool drain];
+                return maage_status_make(MAAGE_STATUS_ALLOCATION_FAILED, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_CREATE, 0);
+            }
+        }
+        color = native->world_source[slot];
+    } else {
+        [native->world_source[slot] release];
+        native->world_source[slot] = nil;
+    }
     command = [native->queue commandBuffer];
     pass = [MTLRenderPassDescriptor renderPassDescriptor];
     pass.colorAttachments[0].texture = color;
@@ -759,6 +779,29 @@ static maage_status maage_metal_frame(maage_renderer *renderer, const maage_wind
         maage_metal_draw_mesh_passes(native, encoder, plan, 0, slot);
     }
     [encoder endEncoding];
+    if (plan->shaders_enabled) {
+        maage_render_uniforms uniforms = {0};
+        MTLRenderPassDescriptor *post = [MTLRenderPassDescriptor renderPassDescriptor];
+        post.colorAttachments[0].texture = scene_output;
+        post.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+        post.colorAttachments[0].storeAction = MTLStoreActionStore;
+        encoder = [command renderCommandEncoderWithDescriptor:post];
+        if (!encoder) {
+            [pool drain];
+            return maage_status_make(MAAGE_STATUS_ERROR, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_PRESENT, 0);
+        }
+        uniforms.parameters[0] = plan->shader_exposure;
+        uniforms.parameters[1] = plan->shader_quality;
+        uniforms.parameters[3] = -1;
+        [encoder setRenderPipelineState:native->pipelines[MAAGE_RENDER_FULLSCREEN]];
+        [encoder setDepthStencilState:nil];
+        [encoder setCullMode:MTLCullModeNone];
+        [encoder setFragmentTexture:color atIndex:0];
+        [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
+        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        [encoder endEncoding];
+        color = scene_output;
+    }
     if (panorama_count) {
         id<MTLTexture> source, blurred;
         MTLTextureDescriptor *description;
@@ -820,6 +863,10 @@ static maage_status maage_metal_frame(maage_renderer *renderer, const maage_wind
         [encoder setDepthStencilState:nil];
         [encoder setCullMode:MTLCullModeNone];
         [encoder setFragmentTexture:blurred atIndex:0];
+        {
+            maage_render_uniforms uniforms = {0};
+            [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
+        }
         [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [encoder endEncoding];
     }

@@ -104,3 +104,10 @@ vertex maage_fragment maage_fullscreen_vertex_shader(uint index [[vertex_id]]) {
     result.rotation_face = 0;
     return result;
 }
+
+fragment float4 maage_fullscreen_fragment_shader(maage_fragment input [[stage_in]], texture2d<float> source [[texture(0)]], constant maage_uniforms &uniforms [[buffer(0)]]) {
+    constexpr sampler pixels(coord::normalized, address::clamp_to_edge, filter::nearest, mip_filter::none);
+    float4 color = source.sample(pixels, input.uv);
+    if (uniforms.parameters.w < 0.0) color.rgb = maage_shader_scene_color(color.rgb, uniforms.parameters.x, uniforms.parameters.y, false);
+    return color;
+}

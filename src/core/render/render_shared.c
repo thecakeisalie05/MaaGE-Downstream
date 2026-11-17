@@ -200,6 +200,13 @@ maage_status maage_render_frame_plan_prepare(maage_renderer *renderer, const maa
         plan->world.fog_distance[2] = (float) horizontal;
         plan->world.fog_distance[3] = (float) vertical;
     }
+    plan->shaders_enabled = renderer->shaders_enabled && matrix != NULL && !plan->panorama_count;
+    plan->shader_exposure = renderer->shader_exposure;
+    plan->shader_quality = (float) renderer->shader_quality;
+    /* Celestial dimensions retain the environment's day/night fog color. Begin
+     * atmospheric blending sooner without reducing the far visibility endpoint.
+     * Constant-light dimensions and underwater exponential fog keep their rules. */
+    if (plan->shaders_enabled && renderer->ambient_light == 0 && plan->world.fog_distance[1] > plan->world.fog_distance[0]) plan->world.fog_distance[0] *= 0.8f;
     plan->hand = plan->world;
     plan->hand.fog[3] = 0;
     memset(plan->hand.fog_distance, 0, sizeof(plan->hand.fog_distance));

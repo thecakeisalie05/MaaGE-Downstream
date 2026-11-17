@@ -82,6 +82,7 @@
     MAAGE_VULKAN_FUNCTION(vkGetImageMemoryRequirements)              \
     MAAGE_VULKAN_FUNCTION(vkGetInstanceProcAddr)                     \
     MAAGE_VULKAN_FUNCTION(vkGetPhysicalDeviceFeatures)               \
+    MAAGE_VULKAN_FUNCTION(vkGetPhysicalDeviceImageFormatProperties) \
     MAAGE_VULKAN_FUNCTION(vkGetPhysicalDeviceFormatProperties)       \
     MAAGE_VULKAN_FUNCTION(vkGetPhysicalDeviceMemoryProperties)       \
     MAAGE_VULKAN_FUNCTION(vkGetPhysicalDeviceProperties)             \
@@ -209,6 +210,7 @@ static maage_status maage_vulkan_load_win32(maage_renderer *renderer, HMODULE *l
 #define vkGetImageMemoryRequirements native->dispatch.vkGetImageMemoryRequirements
 #define vkGetInstanceProcAddr native->dispatch.vkGetInstanceProcAddr
 #define vkGetPhysicalDeviceFeatures native->dispatch.vkGetPhysicalDeviceFeatures
+#define vkGetPhysicalDeviceImageFormatProperties native->dispatch.vkGetPhysicalDeviceImageFormatProperties
 #define vkGetPhysicalDeviceFormatProperties native->dispatch.vkGetPhysicalDeviceFormatProperties
 #define vkGetPhysicalDeviceMemoryProperties native->dispatch.vkGetPhysicalDeviceMemoryProperties
 #define vkGetPhysicalDeviceProperties native->dispatch.vkGetPhysicalDeviceProperties

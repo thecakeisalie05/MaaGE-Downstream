@@ -2,6 +2,7 @@
 #extension GL_GOOGLE_include_directive : require
 #include "common.glsl"
 
+layout(constant_id = 1) const uint maage_linear_scene = 0;
 layout(set = 0, binding = 0) uniform sampler2D maage_atlas;
 layout(location = 0) in vec2 maage_fragment_uv;
 layout(location = 1) in vec4 maage_fragment_color;
@@ -15,11 +16,20 @@ layout(location = 0) out vec4 maage_result;
 
 void main()
 {
+    vec4 color;
     if (maage_fragment_material == float(MAAGE_MESH_MATERIAL_STARFIELD)) {
-        maage_result = maage_shader_fog(maage_shader_starfield(maage_world_position, maage_fog_position, maage.matrix, maage.parameters.x), maage_fog_position, maage_fragment_material, maage.fog, maage.fog_distance, maage.lighting);
-        return;
+        color = maage_shader_starfield(maage_world_position, maage_fog_position, maage.matrix, maage.parameters.x);
+    } else {
+        vec4 texel = texture(maage_atlas, maage_shader_tile_uv(maage_fragment_uv, maage_tile, maage_world_position, maage_rotation_face));
+        if (maage_shader_cutout(maage_fragment_material, texel.a)) discard;
+        color = maage_shader_mesh_color(texel, maage_fragment_color, maage_fragment_light, maage_fragment_material, maage.lighting, maage.parameters);
     }
-    vec4 texel = texture(maage_atlas, maage_shader_tile_uv(maage_fragment_uv, maage_tile, maage_world_position, maage_rotation_face));
-    if (maage_shader_cutout(maage_fragment_material, texel.a)) discard;
-    maage_result = maage_shader_fog(maage_shader_mesh_color(texel, maage_fragment_color, maage_fragment_light, maage_fragment_material, maage.lighting, maage.parameters), maage_fog_position, maage_fragment_material, maage.fog, maage.fog_distance, maage.lighting);
+    vec4 fog = maage.fog;
+    if (maage_linear_scene != 0) {
+        /* Multiplicative shadows carry a factor, not radiance. Their neutral
+         * 0.5 remains neutral under the shared two-source-color blend rule. */
+        if (maage_fragment_material != float(MAAGE_MESH_MATERIAL_MULTIPLY)) color.rgb = maage_shader_srgb_decode(color.rgb);
+        fog.rgb = maage_shader_srgb_decode(fog.rgb);
+    }
+    maage_result = maage_shader_fog(color, maage_fog_position, maage_fragment_material, fog, maage.fog_distance, maage.lighting);
 }
