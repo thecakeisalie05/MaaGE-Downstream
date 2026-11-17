@@ -15,6 +15,7 @@ typedef struct maage_render_backend_api {
     void (*destroy_texture)(maage_render_texture *texture);
     maage_status (*set_vsync)(maage_renderer *renderer, int enabled);
     size_t (*mesh_allocation_bytes)(const maage_render_mesh *mesh);
+    maage_status (*read_frame)(maage_renderer *renderer, maage_image *output);
 } maage_render_backend_api;
 struct maage_render_texture {
     maage_renderer *renderer;

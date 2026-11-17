@@ -799,7 +799,7 @@ static maage_status maage_vulkan_frame_targets(maage_renderer *renderer, maage_v
     framebuffer.height = native->extent.height;
     framebuffer.layers = 1;
     if (!frame->scene.image) {
-        MAAGE_VULKAN_TRY(maage_vulkan_image_create(renderer, native->extent.width, native->extent.height, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT, &frame->scene));
+        MAAGE_VULKAN_TRY(maage_vulkan_image_create(renderer, native->extent.width, native->extent.height, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT, &frame->scene));
         MAAGE_VULKAN_TRY(maage_vulkan_descriptor(renderer, &frame->scene, gpu->nearest));
         MAAGE_VULKAN_TRY(maage_vulkan_image_create(renderer, native->extent.width, native->extent.height, native->depth_format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | (gpu->effects_supported ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0), VK_IMAGE_ASPECT_DEPTH_BIT, &frame->depth));
         attachments[0] = frame->scene.view;
@@ -1198,7 +1198,7 @@ static maage_status maage_vulkan_create(maage_renderer *renderer) {
     pool.queueFamilyIndex = native->graphics_family;
     pool.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     MAAGE_VULKAN_TRY(maage_vulkan_result(vkCreateCommandPool(native->device, &pool, NULL, &gpu->upload_pool)));
-    renderer->capabilities.features |= MAAGE_RENDER_CAP_SHADERS | MAAGE_RENDER_CAP_VERTEX_BUFFERS | MAAGE_RENDER_CAP_INDEX_BUFFERS | MAAGE_RENDER_CAP_RENDER_TARGETS | MAAGE_RENDER_CAP_DEPTH | MAAGE_RENDER_CAP_TEXTURED_MESH | MAAGE_RENDER_CAP_UI | MAAGE_RENDER_CAP_SCENE | MAAGE_RENDER_CAP_FOG | MAAGE_RENDER_CAP_NATIVE_SHADERS;
+    renderer->capabilities.features |= MAAGE_RENDER_CAP_SHADERS | MAAGE_RENDER_CAP_VERTEX_BUFFERS | MAAGE_RENDER_CAP_INDEX_BUFFERS | MAAGE_RENDER_CAP_RENDER_TARGETS | MAAGE_RENDER_CAP_DEPTH | MAAGE_RENDER_CAP_TEXTURED_MESH | MAAGE_RENDER_CAP_UI | MAAGE_RENDER_CAP_SCENE | MAAGE_RENDER_CAP_FOG | MAAGE_RENDER_CAP_NATIVE_SHADERS | MAAGE_RENDER_CAP_FRAME_READBACK;
     {
         VkFormatProperties format;
         VkFormatFeatureFlags required = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
@@ -1379,8 +1379,98 @@ static maage_status maage_vulkan_set_vsync(maage_renderer *renderer, int enabled
     renderer->refresh = 1;
     return maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_SET, 0);
 }
+/* Capture uses a private transfer buffer and fence after the selected frame.
+ * This explicit offline operation adds no readback cost to normal rendering. */
+static maage_status maage_vulkan_read_frame(maage_renderer *renderer, maage_image *output) {
+    maage_vulkan_renderer *native = renderer->platform;
+    maage_vulkan_rendering *gpu = native->rendering;
+    maage_vulkan_frame_data *frame = NULL;
+    maage_vulkan_buffer buffer = {0};
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    VkCommandBufferAllocateInfo allocate = {0};
+    VkCommandBufferBeginInfo begin = {0};
+    VkFenceCreateInfo create = {0};
+    VkSubmitInfo submit = {0};
+    VkBufferImageCopy copy = {0};
+    VkBufferMemoryBarrier barrier = {0};
+    size_t bytes;
+    maage_status result;
+    int submitted = 0;
+    for (unsigned int i = 0; i < MAAGE_VULKAN_FRAME_SLOTS; ++i)
+        if (gpu->frames[i].serial && gpu->frames[i].scene.image && (!frame || gpu->frames[i].serial > frame->serial)) frame = &gpu->frames[i];
+    if (!frame || !native->extent.width || !native->extent.height || native->extent.width > INT_MAX || native->extent.height > INT_MAX || (size_t) native->extent.width > SIZE_MAX / 4U / native->extent.height) return MAAGE_VULKAN_ERROR(MAAGE_STATUS_INVALID_STATE);
+    bytes = (size_t) native->extent.width * native->extent.height * 4U;
+    result = maage_vulkan_buffer_create(renderer, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, 1, &buffer);
+    if (maage_status_failed(result)) goto done;
+    allocate.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocate.commandPool = gpu->upload_pool;
+    allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocate.commandBufferCount = 1;
+    result = maage_vulkan_result(vkAllocateCommandBuffers(native->device, &allocate, &command));
+    if (maage_status_failed(result)) goto done;
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    result = maage_vulkan_result(vkBeginCommandBuffer(command, &begin));
+    if (maage_status_failed(result)) goto done;
+    maage_vulkan_transition(native, command, frame->scene.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy.imageSubresource.layerCount = 1;
+    copy.imageExtent.width = native->extent.width;
+    copy.imageExtent.height = native->extent.height;
+    copy.imageExtent.depth = 1;
+    vkCmdCopyImageToBuffer(command, frame->scene.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer.buffer, 1, &copy);
+    barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = buffer.buffer;
+    barrier.size = VK_WHOLE_SIZE;
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1, &barrier, 0, NULL);
+    maage_vulkan_transition(native, command, frame->scene.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT);
+    result = maage_vulkan_result(vkEndCommandBuffer(command));
+    if (maage_status_failed(result)) goto done;
+    create.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    result = maage_vulkan_result(vkCreateFence(native->device, &create, NULL, &fence));
+    if (maage_status_failed(result)) goto done;
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &command;
+    result = maage_vulkan_result(vkQueueSubmit(native->graphics_queue, 1, &submit, fence));
+    if (maage_status_failed(result)) goto done;
+    submitted = 1;
+    result = maage_vulkan_result(vkWaitForFences(native->device, 1, &fence, VK_TRUE, UINT64_MAX));
+    if (maage_status_failed(result)) {
+        vkDeviceWaitIdle(native->device);
+        goto done;
+    }
+    submitted = 0;
+    if (!buffer.coherent) {
+        VkMappedMemoryRange range = {0};
+        range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        range.memory = buffer.memory;
+        range.size = VK_WHOLE_SIZE;
+        result = maage_vulkan_result(vkInvalidateMappedMemoryRanges(native->device, 1, &range));
+        if (maage_status_failed(result)) goto done;
+    }
+    output->pixels = malloc(bytes);
+    if (!output->pixels) {
+        result = MAAGE_VULKAN_ERROR(MAAGE_STATUS_ALLOCATION_FAILED);
+        goto done;
+    }
+    memcpy(output->pixels, buffer.mapped, bytes);
+    output->width = (int) native->extent.width;
+    output->height = (int) native->extent.height;
+    output->stride = (size_t) native->extent.width * 4;
+done:
+    if (submitted) vkDeviceWaitIdle(native->device);
+    if (fence) vkDestroyFence(native->device, fence, NULL);
+    if (command) vkFreeCommandBuffers(native->device, gpu->upload_pool, 1, &command);
+    maage_vulkan_buffer_destroy(native, &buffer);
+    return result;
+}
 const maage_render_backend_api maage_render_vulkan_api = {
     MAAGE_RENDER_VULKAN, maage_vulkan_create, maage_vulkan_destroy,
     MAAGE_RENDER_CAPABILITIES_VERSION, NULL, maage_vulkan_render_frame, maage_vulkan_upload_geometry,
     maage_vulkan_destroy_mesh, maage_vulkan_create_texture,
-    maage_vulkan_destroy_texture, maage_vulkan_set_vsync, maage_vulkan_mesh_allocation_bytes};
+    maage_vulkan_destroy_texture, maage_vulkan_set_vsync, maage_vulkan_mesh_allocation_bytes, maage_vulkan_read_frame};

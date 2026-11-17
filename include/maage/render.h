@@ -4,6 +4,7 @@
 #include "maage/geometry.h"
 #include "maage/status.h"
 #include "maage/render_effects.h"
+#include "maage/image.h"
 
 typedef struct maage_renderer maage_renderer;
 typedef struct maage_render_mesh maage_render_mesh;
@@ -51,6 +52,7 @@ typedef struct maage_render_desc {
 #define MAAGE_RENDER_CAP_NATIVE_SHADERS 0x10000UL
 #define MAAGE_RENDER_CAP_NATIVE_HDR 0x20000UL
 #define MAAGE_RENDER_CAP_WORLD_EFFECTS 0x40000UL
+#define MAAGE_RENDER_CAP_FRAME_READBACK 0x80000UL
 #define MAAGE_RENDER_FORMAT_RGBA8 0x01UL
 #define MAAGE_RENDER_FORMAT_BGRA8 0x02UL
 #define MAAGE_RENDER_SYNC_CPU_WAIT 0x01UL
@@ -249,6 +251,11 @@ maage_status maage_renderer_draw_meshes(maage_renderer *renderer, const maage_re
  * copies/resources outlive submitted work; deferred failures surface on a later
  * call or destroy. */
 maage_status maage_renderer_draw_frame(maage_renderer *renderer, const maage_render_mesh *const *meshes, size_t count, const float view_projection[16], const maage_render_ui_data *ui, maage_status_trace *trace);
+/* Explicit one-shot readback of the last completed display-referred frame.
+ * Blocks for GPU completion; never call on an ordinary interactive frame loop.
+ * Output must be empty; destroy its owned RGBA8 pixels with maage_image_destroy.
+ * Unsupported adapters fail explicitly. No desktop/window pixels are sampled. */
+maage_status maage_renderer_read_frame(maage_renderer *renderer, maage_image *output, maage_status_trace *trace);
 /* Force presentation resources to refresh on the next frame, if needed. */
 maage_status maage_renderer_resize(maage_renderer *renderer);
 #endif

@@ -88,6 +88,47 @@ The GPU vertex and surface-table strides remain 32 bytes, and draw pushes remain
 
 No bloom, G-buffer, physically based material system, point-light shadows, temporal reconstruction or ray-tracing extension is implied. Compilation/offline math and persistence checks do not establish graphical correctness, native validation-layer cleanliness or GTX 1080 frame-time targets. Windows Vulkan/modern GL builds are available locally; Metal and other platform builds require their native toolchains. GPU performance has not been measured for these effects.
 
+### One-Frame Scene Capture
+
+The Client can open an existing world, export one settled viewport as a lossless PNG plus a settings/camera text sidecar, then exit and finish normal Server shutdown. This uses the actual forward renderer, saved `config/options.ini`, resources, materials, lighting, independent LOD, shader settings and tone mapping. It is a development capture mode, not a separate renderer. PNG avoids JPEG compression artifacts when comparing shader changes.
+
+The initial implementation requires Vulkan and an available desktop/display; it is not a headless Server mode. Windows is verified locally. Metal/OpenGL/Software report unsupported GPU readback. A window is created for initialization, but the exported pixels come directly from the final Vulkan RGBA8 composition image; other windows cannot appear in the capture. Normal F2 screenshots retain their existing platform capture behavior.
+
+Close any Client using the chosen instance first. Use a world that already exists in that instance and whose resources have been prepared by Launcher. Instance/world UUIDs are directory names under the MaaGE data root (`%APPDATA%/MaaGE/instances/<instance>/worlds/<world>` on Windows). Capture takes the ordinary exclusive instance/world leases; it does not bypass locking, acquire assets or authenticate. Normal World startup/shutdown may persist streamed/generated data and checkpoints. For repeated comparisons without changing your everyday world, use a dedicated development instance/world copy.
+
+From the source checkout in PowerShell, substitute your UUIDs:
+
+```powershell
+.\scripts\render-scene.ps1 `
+    -Instance 'INSTANCE-UUID' -World 'WORLD-UUID' `
+    -Output '.\captures\water-before.png' `
+    -Yaw 45 -Pitch 12 -Daytime 6000 -Clock 2 -Build
+```
+
+`-Build` builds the Client/manifest using the existing Windows preset; omit it to use the most recently built local package. Configure the normal workspace first and put CMake on PATH when building. The script creates the output directory, waits for process exit, checks its exit code and verifies a new output was produced. It prints the image and sidecar paths. It neither imports packages nor changes the selected Launcher installation. `-DataDirectory` selects a nondefault MaaGE root.
+
+Capture options and their direct Client equivalents:
+
+| PowerShell option | Client argument | Meaning |
+| --- | --- | --- |
+| `-Output file.png` | `--render-scene=<path.png>` | Required output; replaces that image after successful readback/encoding. Parent directory must exist for direct CLI use. |
+| `-Width 1280 -Height 720` | `--scene-size=1280x720` | Temporary window size, 64..8192 per axis. Window-manager/DPI limits may affect the actual framebuffer size, recorded in the sidecar. |
+| `-Yaw 45 -Pitch 12` | `--scene-look=45,12` | Degrees; zero yaw looks toward negative Z, positive pitch looks down. Omit both to use the saved player's look. |
+| `-Eye 65,70,-82` | `--scene-eye=65,70,-82` | Optional presentation-only eye position. X/Z must remain within `(render_distance - 1) * 16` blocks of the saved player's eye; it does not teleport the player or stream a remote camera. |
+| `-Clock 2` | `--scene-clock=2` | Fixed visual seconds for water/wind/texture animation, default 0. |
+| `-Daytime 6000` | `--scene-daytime=6000` | Optional presentation-only day tick, 0..23999. Saved weather/moon phase remain in effect. Does not change the Server environment. |
+| `-Timeout 180` | `--scene-wait=180` | Maximum loading/settling seconds, default 180; timeout fails rather than exporting the loading screen. |
+| `-RenderDistance 12` | `--render-distance=12` | Optional temporary full-detail radius; otherwise uses saved video settings. |
+| `-IncludeUI` | `--scene-ui` | Include HUD/foreground. Default exports the world viewport, without HUD or held hand. |
+
+Direct Client invocation also requires `--instance=<UUID> --world=<UUID> --renderer=vulkan`, plus optional `--data-directory=<absolute root>`. It requires an existing world and rejects world creation in capture mode. The Client temporarily uses Windowed mode and never saves capture overrides back to `options.ini`.
+
+Loading uses ordinary streaming/upload frames. After initial terrain is visible, the capture waits for generation, replica lighting/meshing, pending uploads and enabled LOD work to settle across 24 successful frames. Simulation is paused through the existing Server command; streaming continues. Only one final image is exported, not a video or frame sequence. World generation/cache availability and ordinary startup before the pause mean this is not a bit-exact deterministic simulation replay. Check `logs/client.log` for resource warnings, LOD budget limits or unsupported effects.
+
+For code refinement, keep world, eye/look, size, daytime and clock fixed. Change only the desired settings or shader code, rebuild, and export `water-after.png`. Give ChatGPT both PNGs, their `.png.txt` sidecars and a description of the visual change you want. The sidecar includes the build identity, renderer/device/capabilities, actual image dimensions, camera, environment, FOV, LOD and every shader control. Existing instance options control exposure/presets and individual effect toggles; edit them only while the Client is closed.
+
+Relevant code: `scripts/render-scene.ps1` resolves/starts the built package; `src/client/scene_capture.c` parses capture arguments and writes output/metadata; `src/client/viewport.c` owns readiness/camera/shader integration. `maage_renderer_read_frame` returns owned top-to-bottom RGBA8 pixels (release with `maage_image_destroy`). Vulkan performs an explicit one-shot image-to-buffer copy with a private fence and noncoherent-memory invalidation; ordinary interactive frames perform no readback. `maage_image_write_png` handles encoding. Water geometry/analytic normals are in `vulkan/shaders/effects.glsl` and `effects_mesh.vert/.frag`; atmosphere, scattering and post processing use `sky.frag`, `scatter.frag` and `effects_post.frag` in the same renderer directory.
+
 ### Independent Persistent Distant Terrain
 
 Level of Detail offers Native LOD (default OFF), 16/32/64/128 distant chunks, and High/Balanced/Performance geometry quality. The full-detail radius remains the ordinary render distance, with a four-chunk transition margin when independent LOD is available. Server simulation distance remains independent. Camera clipping and atmospheric visibility use the distant radius; underwater brightness retains the full-detail radius, so distant terrain is not hidden behind near-stream fog. The native sampler currently supports the primary Overworld; other dimensions keep their ordinary full-detail radius rather than expanding Server interest to the distant radius.

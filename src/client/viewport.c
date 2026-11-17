@@ -26,6 +26,7 @@
 #include "lod.h"
 #include "distant_lod.h"
 #include "shader_scene.h"
+#include "scene_capture.h"
 #include "screenshot.h"
 #include "interaction.h"
 #include "prediction.h"
@@ -828,6 +829,7 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     maage_client_debug debug;
     maage_client_profiler profiler;
     maage_client_shader_scene shader_scene;
+    maage_client_scene_capture scene_capture;
     maage_client_profile_marks profile_marks;
     char profile_logs[MAAGE_PATH_CAPACITY];
     char screenshot_dir[MAAGE_PATH_CAPACITY], screenshot_file[MAAGE_PATH_CAPACITY];
@@ -904,6 +906,7 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     screenshot_dir[0] = 0;
     memset(&lod, 0, sizeof(lod));
     memset(&shader_scene, 0, sizeof(shader_scene));
+    memset(&scene_capture, 0, sizeof(scene_capture));
     memset(&outbox, 0, sizeof(outbox));
     outbox.diagnostics = maage_log_enabled("maage.client.latency", MAAGE_LOG_VERBOSE) && getenv("MAAGE_WORLD_DIAGNOSTICS") && !strcmp(getenv("MAAGE_WORLD_DIAGNOSTICS"), "1");
     memset(&latest, 0, sizeof(latest));
@@ -914,9 +917,20 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     if (maage_status_code(rendered) != MAAGE_STATUS_SUCCESS) goto done;
     maage_log_info("maage.client.render", "Requested renderer family: %d (0=auto, 2=vulkan, 3=opengl). Vulkan compiled=%d.",
         (int) render_config.family, maage_render_backend_compiled(MAAGE_RENDER_VULKAN));
+    operation = maage_client_scene_parse(argc, argv, &scene_capture);
+    if (maage_status_failed(operation)) {
+        failure_message = "Invalid scene capture options (PNG output, look, eye, size, clock, daytime or wait).";
+        goto done;
+    }
+    if (scene_capture.path) render_config.required_features |= MAAGE_RENDER_CAP_FRAME_READBACK;
     operation = maage_client_world_options_parse(argc, argv, &options);
     if (maage_status_failed(operation)) {
         failure_message = "Invalid world, seed, worker, radius, or gameplay options.";
+        goto done;
+    }
+    if (scene_capture.path && (!options.id || options.create)) {
+        operation = maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_PARSE, 0);
+        failure_message = "Scene capture requires --world=<existing world UUID>.";
         goto done;
     }
     if (!instance) {
@@ -929,6 +943,7 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     operation = maage_client_options_load(instance, &video_options, controls);
     if (maage_status_failed(operation)) maage_log_status(MAAGE_LOG_WARNING, "maage.client.options", operation, "Unable to read config/options.ini; using defaults.");
     saved_video_options = video_options;
+    if (scene_capture.path) video_options.window_mode = MAAGE_CLIENT_WINDOWED;
     if (options.radius_specified) video_options.render_distance = options.radius;
     else options.radius = video_options.render_distance;
     strcpy(directory, maage_client_storage_data_root());
@@ -945,6 +960,10 @@ maage_status maage_client_run(int argc, char *const argv[], maage_status_trace *
     window_config.visible = 0;
     /* Enables the notch-capable drawable only for borderless/fullscreen;
      * ordinary macOS Windowed mode still keeps its opaque native title bar. */
+    if (scene_capture.path) {
+        window_config.width = scene_capture.width;
+        window_config.height = scene_capture.height;
+    }
     window_config.full_display_content = 1;
     result = maage_window_create(system, &window_config, &window, trace);
     if (maage_status_code(result) != MAAGE_STATUS_SUCCESS) goto window_failed;
@@ -1251,6 +1270,7 @@ choose_world:
     pitch = latest.player.pitch;
     last = maage_time_monotonic_seconds();
     if (last < 0.0) goto clock_failed;
+    scene_capture.started = last;
     received_time = diagnostic_time = mesh_activity.sample_start = last;
     maage_client_ui_notify(ui, resource_notice, last);
     if (audio_notice) maage_client_ui_notify(ui, audio_notice, last);
@@ -1277,6 +1297,17 @@ choose_world:
         last = now;
         if (raw_elapsed < 0.0) raw_elapsed = 0.0;
         if (!retired_in_shutdown && retired_resources.view && !maage_world_presentation_borrowed(visual_world, maage_content_view_blocks(retired_resources.view))) maage_client_resources_destroy(&retired_resources);
+        if (scene_capture.path) {
+            if (now - scene_capture.started > scene_capture.timeout) {
+                operation = maage_status_make(MAAGE_STATUS_INVALID_STATE, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_READ, 0);
+                failure_message = "Scene capture timed out before terrain and lighting settled.";
+                goto done;
+            }
+            memset(input.keys, 0, sizeof(input.keys));
+            memset(input.pressed, 0, sizeof(input.pressed));
+            input.mouse_delta_x = input.mouse_delta_y = 0;
+            input.primary_pressed = 0;
+        }
         screenshot_requested = input.focused && input.pressed[MAAGE_INPUT_KEY_F2];
         if (input.focused && input.keys[MAAGE_INPUT_KEY_F3] && input.pressed[MAAGE_INPUT_KEY_T]) {
             maage_client_lod_cancel(&lod);
@@ -1335,7 +1366,7 @@ choose_world:
             initial_capture = 1;
             options_save_needed = 1;
         }
-        if (options_save_needed && !changing_mode) {
+        if (options_save_needed && !changing_mode && !scene_capture.path) {
             operation = maage_client_options_store(frontend, ui, &saved_video_options, 0);
             options_save_needed = 0;
             if (maage_status_failed(operation)) {
@@ -1377,7 +1408,7 @@ choose_world:
             initial_capture = 0;
             if (input.captured) result = maage_window_capture_mouse(window, 0);
             input.captured = 0;
-        } else if (!changing_mode && input.focused && !input.captured && (initial_capture || was_modal || input.primary_pressed)) {
+        } else if (!scene_capture.path && !changing_mode && input.focused && !input.captured && (initial_capture || was_modal || input.primary_pressed)) {
             result = maage_window_capture_mouse(window, 1);
             initial_capture = 0;
             if (maage_status_code(result) == MAAGE_STATUS_SUCCESS) {
@@ -1386,7 +1417,7 @@ choose_world:
             }
         }
         if (maage_status_code(result) != MAAGE_STATUS_SUCCESS) goto window_failed;
-        active = !maage_client_ui_modal(ui) && !changing_mode &&
+        active = !scene_capture.path && !maage_client_ui_modal(ui) && !changing_mode &&
                  input.focused && input.captured && state.visible &&
                  state.framebuffer_width > 0 && state.framebuffer_height > 0;
         if (!active || was_modal || !was_active) maage_controls_block(controls, &input);
@@ -1429,10 +1460,10 @@ choose_world:
             }
             maage_client_ui_command_submitted(ui, &command, outbox.next_sequence);
         }
-        if (paused_command != (maage_client_ui_pauses_game(ui) ? 1 : 0) && outbox.count < MAAGE_CLIENT_OUTBOX_CAPACITY) {
+        if (paused_command != (scene_capture.path || maage_client_ui_pauses_game(ui) ? 1 : 0) && outbox.count < MAAGE_CLIENT_OUTBOX_CAPACITY) {
             memset(&command, 0, sizeof(command));
             command.kind = MAAGE_CMD_PAUSE;
-            command.paused = maage_client_ui_pauses_game(ui) ? 1 : 0;
+            command.paused = scene_capture.path || maage_client_ui_pauses_game(ui) ? 1 : 0;
             operation = maage_client_outbox_queue(&outbox, &command);
             if (!maage_status_failed(operation)) paused_command = command.paused;
         }
@@ -1802,6 +1833,13 @@ choose_world:
         /* Local look retains its last angles when capture is released. Delayed
          * Server echoes must neither rotate the view nor feed back into input.
          * Position still interpolates copied authoritative motion below. */
+        if (scene_capture.path) {
+            if (scene_capture.has_look) {
+                yaw = scene_capture.look[0] * 0.017453292519943295;
+                pitch = scene_capture.look[1] * 0.017453292519943295;
+            }
+            if (scene_capture.daytime >= 0) latest.environment.day_tick = (unsigned long) scene_capture.daytime;
+        }
         render_yaw = yaw;
         render_pitch = pitch;
         for (axis = 0; axis < 3; ++axis)
@@ -1896,6 +1934,14 @@ choose_world:
                 if (eye_fluid) effective_fov /= eye_fluid->fov_scale;
                 camera_fluid = maage_fluid_get(maage_content_fluids(content), maage_world_fluid_at(visual_world, camera_eye));
                 if (camera_fluid) effective_fov *= camera_fluid->fov_scale;
+            }
+            if (scene_capture.path && scene_capture.has_eye) {
+                if (fabs(scene_capture.eye[0] - eye[0]) > (video_options.render_distance - 1) * 16 || fabs(scene_capture.eye[2] - eye[2]) > (video_options.render_distance - 1) * 16) {
+                    operation = maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_READ, 0);
+                    failure_message = "Capture eye must remain within the saved player's resident terrain radius.";
+                    goto done;
+                }
+                memcpy(camera_eye, scene_capture.eye, sizeof(camera_eye));
             }
             maage_client_camera(matrix, camera_eye, camera_yaw, camera_pitch, (double) state.framebuffer_width / state.framebuffer_height, scene_radius, effective_fov, camera_effects.matrix, camera_mode == MAAGE_CAMERA_FIRST);
         }
@@ -2065,12 +2111,25 @@ choose_world:
             rendered = maage_client_item_entities_update(item_entities, session, visual_world, &visual_snapshot, alpha, eye, now, player_view.draws, player_view.count, cache.slots, cache.capacity, trace);
             if (maage_status_failed(rendered)) goto done;
             if (maage_status_is_warning(rendered)) maage_client_ui_notify(ui, rendered, now);
+            if (scene_capture.path) {
+                shader_scene.began = now - scene_capture.clock;
+                camera_fluid = maage_fluid_get(maage_content_fluids(content), maage_world_fluid_at(visual_world, camera_eye));
+                shader_scene.immersion = camera_fluid && camera_fluid->shader_water ? 1.0f : 0.0f;
+            }
             operation = maage_client_shader_scene_update(&shader_scene, renderer, &video_options.shader_effects, video_options.shaders_enabled, &latest, visual_world, items, item_entities, camera_eye, now, raw_elapsed, (unsigned int) selected_hotbar);
             if (maage_status_failed(operation)) goto done;
             rendered = maage_client_environment_update(environment_view, renderer, &latest, maage_client_ui_width(ui), maage_client_ui_height(ui), matrix, visual_world, camera_eye, camera_yaw, camera_pitch, camera_mode == MAAGE_CAMERA_FIRST, options.radius, scene_radius, video_options.shaders_enabled && video_options.shader_effects.underwater && shader_scene.supported);
             if (maage_status_failed(rendered)) goto done;
+            if (scene_capture.path) {
+                operation = maage_renderer_set_animation_tick(renderer, (float) (scene_capture.clock * 20));
+                if (maage_status_failed(operation)) goto done;
+                if (!scene_capture.ui) {
+                    operation = maage_renderer_set_foreground(renderer, NULL, NULL, 0, 0);
+                    if (maage_status_failed(operation)) goto done;
+                }
+            }
             profile_marks.draw_begin = profiler.active ? maage_time_monotonic_seconds() : 0;
-            rendered = maage_renderer_draw_frame(renderer, cache.draws, draw_count, matrix, ui_draw, trace);
+            rendered = maage_renderer_draw_frame(renderer, cache.draws, draw_count, matrix, scene_capture.path && !scene_capture.ui ? NULL : ui_draw, trace);
             if (maage_status_failed(rendered)) goto done;
             if (maage_status_code(rendered) == MAAGE_STATUS_SUCCESS) maage_client_item_entities_submitted(item_entities);
 
@@ -2079,6 +2138,24 @@ choose_world:
             rendered = MAAGE_STATUS_VALUE(MAAGE_STATUS_NOOP, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_UPDATE, 0);
         }
         profile_marks.draw_end = profiler.active ? maage_time_monotonic_seconds() : 0;
+        if (scene_capture.path && maage_status_code(rendered) == MAAGE_STATUS_SUCCESS) {
+            maage_distant_lod_stats capture_lod;
+            int ready;
+            maage_distant_lod_get_stats(distant_lod, &capture_lod);
+            ready = !loading_terrain && !latest.travelling && latest.paused && !cache.upload_mesh && !first_count && !visual_stats.running_jobs && !visual_stats.completed_uncommitted_jobs && !latest.world_stats.completed_uncommitted_jobs && !visual_stats.meshing_queued && !visual_stats.lighting_queued && !latest.world_stats.generation_queued && !latest.world_stats.generation_running && (!video_options.lod_enabled || (!capture_lod.active && !capture_lod.publication_backlog));
+            scene_capture.settled = ready ? scene_capture.settled + 1 : 0;
+            if (scene_capture.settled >= 24) {
+                operation = maage_client_scene_save(&scene_capture, renderer, &video_options, &latest, options.id, camera_eye, camera_yaw, camera_pitch, trace);
+                if (maage_status_failed(operation)) {
+                    failure_message = "Scene capture output failed.";
+                    goto done;
+                }
+                maage_log_info("maage.client.render", "Scene captured to %s (GPU readback, settings sidecar).", scene_capture.path);
+                scene_capture.captured = 1;
+                ok = 1;
+                break;
+            }
+        }
         /* Screenshot capture may spend hundreds of milliseconds reading desktop pixels
          * and encoding PNG. It is frame overhead, NOT renderer API time. */
         if (screenshot_requested && maage_status_code(rendered) == MAAGE_STATUS_SUCCESS) {
@@ -2249,7 +2326,12 @@ done:
     free(shadow_casters);
     /* Capture the failing occurrence before saving options overwrites operation.
      * An explicitly retained Server/window/clock failure remains authoritative. */
-    if (splash.close_requested) ok = 1;
+    if (splash.close_requested && !scene_capture.path) ok = 1;
+    if (scene_capture.path && !scene_capture.captured && ok) {
+        ok = 0;
+        operation = maage_status_make(MAAGE_STATUS_INTERRUPTED, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_READ, 0);
+        failure_message = "Scene capture cancelled before output completed.";
+    }
     if (ok) outcome = maage_status_make(maage_status_is_success(resource_notice) ? MAAGE_STATUS_SUCCESS : MAAGE_STATUS_PARTIAL, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_STOP, 0);
     else if (!maage_status_failed(outcome)) {
         outcome = maage_status_failed(rendered) ? rendered : (maage_status_failed(result) ? result : operation);
@@ -2260,7 +2342,7 @@ done:
      * their background operations finish after the UI is hidden. */
     if (window) (void) maage_window_set_visible(window, 0);
     maage_log_info("maage.client", "Client shutting down...");
-    if (options_ready && ui) {
+    if (options_ready && ui && !scene_capture.path) {
         operation = maage_client_options_store(frontend, ui, &saved_video_options, 1);
         if (maage_status_failed(operation)) maage_log_status(MAAGE_LOG_WARNING, "maage.client.options", operation, "Unable to persist config/options.ini during shutdown.");
     }

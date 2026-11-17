@@ -613,3 +613,14 @@ maage_status maage_renderer_resize(maage_renderer *renderer) {
     renderer->refresh = 1;
     return maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_RESIZE, 0);
 }
+
+maage_status maage_renderer_read_frame(maage_renderer *renderer, maage_image *output, maage_status_trace *trace) {
+    maage_status result;
+    if (!renderer || !output || output->pixels) return MAAGE_STATUS_PROPAGATE(trace, maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_READ, 0), MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_READ);
+    if (!renderer->api->read_frame) return MAAGE_STATUS_PROPAGATE(trace, maage_status_make(MAAGE_STATUS_SYSTEM_NOT_SUPPORTED, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_READ, 0), MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_READ);
+    renderer->operation_trace = trace;
+    renderer->trace_operation = MAAGE_OPERATION_READ;
+    result = renderer->api->read_frame(renderer, output);
+    renderer->operation_trace = NULL;
+    return MAAGE_STATUS_PROPAGATE(trace, result, MAAGE_CONTEXT_RENDER, MAAGE_OPERATION_READ);
+}

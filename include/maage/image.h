@@ -16,5 +16,7 @@ maage_status maage_image_load_png(const char *path, maage_image *image, maage_st
 /* Original, asset-independent magenta/black checkerboard. Caller owns pixels;
  * nearest sampling is provided by the existing renderer texture contract. */
 maage_status maage_image_make_missing(maage_image *image, int width, int height);
+/* Writes an owned/borrowed top-to-bottom RGBA8 image as lossless PNG. */
+maage_status maage_image_write_png(const char *path, const maage_image *image, maage_status_trace *trace);
 maage_status maage_image_destroy(maage_image *image);
 #endif

@@ -1094,4 +1094,4 @@ const maage_render_backend_api maage_render_metal_api = {
     MAAGE_RENDER_METAL, maage_metal_create, maage_metal_destroy,
     MAAGE_RENDER_CAPABILITIES_VERSION, NULL, maage_metal_frame, maage_metal_upload_geometry,
     maage_metal_destroy_mesh, maage_metal_create_texture, maage_metal_destroy_texture,
-    maage_metal_set_vsync, maage_metal_mesh_allocation_bytes};
+    maage_metal_set_vsync, maage_metal_mesh_allocation_bytes, NULL};

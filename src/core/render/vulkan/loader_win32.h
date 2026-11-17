@@ -21,6 +21,8 @@
     MAAGE_VULKAN_FUNCTION(vkCmdClearColorImage)                      \
     MAAGE_VULKAN_FUNCTION(vkCmdCopyBuffer)                           \
     MAAGE_VULKAN_FUNCTION(vkCmdCopyBufferToImage)                    \
+    MAAGE_VULKAN_FUNCTION(vkCmdCopyImageToBuffer)                    \
+    MAAGE_VULKAN_FUNCTION(vkInvalidateMappedMemoryRanges)             \
     MAAGE_VULKAN_FUNCTION(vkCmdCopyImage)                            \
     MAAGE_VULKAN_FUNCTION(vkCmdDraw)                                 \
     MAAGE_VULKAN_FUNCTION(vkCmdDrawIndexed)                          \
@@ -150,6 +152,8 @@ static maage_status maage_vulkan_load_win32(maage_renderer *renderer, HMODULE *l
 #define vkCmdClearColorImage native->dispatch.vkCmdClearColorImage
 #define vkCmdCopyBuffer native->dispatch.vkCmdCopyBuffer
 #define vkCmdCopyBufferToImage native->dispatch.vkCmdCopyBufferToImage
+#define vkCmdCopyImageToBuffer native->dispatch.vkCmdCopyImageToBuffer
+#define vkInvalidateMappedMemoryRanges native->dispatch.vkInvalidateMappedMemoryRanges
 #define vkCmdCopyImage native->dispatch.vkCmdCopyImage
 #define vkCmdDraw native->dispatch.vkCmdDraw
 #define vkCmdDrawIndexed native->dispatch.vkCmdDrawIndexed

@@ -839,4 +839,4 @@ static maage_status maage_opengl_modern_destroy(maage_renderer *renderer) {
 const maage_render_backend_api maage_render_opengl_api = {
     MAAGE_RENDER_OPENGL, maage_opengl_modern_create, maage_opengl_modern_destroy,
     MAAGE_RENDER_CAPABILITIES_VERSION, NULL, maage_gl_frame_render, maage_gl_upload_geometry,
-    maage_gl_destroy_mesh, maage_gl_create_texture, maage_gl_destroy_texture, maage_opengl_context_vsync, maage_gl_mesh_allocation_bytes};
+    maage_gl_destroy_mesh, maage_gl_create_texture, maage_gl_destroy_texture, maage_opengl_context_vsync, maage_gl_mesh_allocation_bytes, NULL};

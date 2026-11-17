@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 maage_status maage_image_load_png(const char *path, maage_image *output, maage_status_trace *trace) {
     png_image image;
@@ -91,4 +92,24 @@ maage_status maage_image_destroy(maage_image *image) {
     free(image->pixels);
     memset(image, 0, sizeof(*image));
     return maage_status_make(present ? MAAGE_STATUS_SUCCESS : MAAGE_STATUS_NOOP, 0, MAAGE_OPERATION_DESTROY, 0);
+}
+
+maage_status maage_image_write_png(const char *path, const maage_image *source, maage_status_trace *trace) {
+    png_image image;
+    FILE *file;
+    maage_status result;
+    int encoded;
+    if (!path || !*path || !source || !source->pixels || source->width <= 0 || source->height <= 0 || (size_t) source->width > (size_t) INT_MAX / 4 || source->stride < (size_t) source->width * 4 || source->stride > INT_MAX) return MAAGE_STATUS_PROPAGATE(trace, maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_RESOURCE, MAAGE_OPERATION_WRITE, 0), MAAGE_CONTEXT_RESOURCE, MAAGE_OPERATION_WRITE);
+    file = maage_storage_open(path, "wb");
+    if (!file) return MAAGE_STATUS_PROPAGATE(trace, maage_status_from_errno(errno, MAAGE_CONTEXT_STORAGE, MAAGE_OPERATION_OPEN), MAAGE_CONTEXT_RESOURCE, MAAGE_OPERATION_WRITE);
+    memset(&image, 0, sizeof(image));
+    image.version = PNG_IMAGE_VERSION;
+    image.width = (png_uint_32) source->width;
+    image.height = (png_uint_32) source->height;
+    image.format = PNG_FORMAT_RGBA;
+    encoded = png_image_write_to_stdio(&image, file, 0, source->pixels, (png_int_32) source->stride, NULL);
+    result = encoded ? maage_storage_sync(file) : maage_status_make(MAAGE_STATUS_IO_ERROR, MAAGE_CONTEXT_RESOURCE, MAAGE_OPERATION_WRITE, 0);
+    if (fclose(file) && !maage_status_failed(result)) result = maage_status_make(MAAGE_STATUS_IO_ERROR, MAAGE_CONTEXT_STORAGE, MAAGE_OPERATION_CLOSE, 0);
+    png_image_free(&image);
+    return MAAGE_STATUS_PROPAGATE(trace, result, MAAGE_CONTEXT_RESOURCE, MAAGE_OPERATION_WRITE);
 }
