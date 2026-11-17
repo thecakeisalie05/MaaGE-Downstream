@@ -11,7 +11,8 @@ extern const maage_content_module maage_base_module;
  * one sampler must not be shared concurrently across threads. */
 typedef struct maage_base_lod_sampler maage_base_lod_sampler;
 typedef struct maage_base_lod_column {
-    int height, water_height;
+    int height, water_height, canopy_height; /* Upper surface planes; zero water/canopy means absent. */
+    maage_block_state_id canopy;
     maage_block_state_id surface, water;
     maage_biome_id biome;
 } maage_base_lod_column;

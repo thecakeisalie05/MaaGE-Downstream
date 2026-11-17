@@ -3173,6 +3173,39 @@ maage_status maage_column_update_destroy(maage_column_update *update) {
     free(update);
     return maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_DESTROY, 0);
 }
+maage_status maage_world_copy_column(const maage_world *world, int x, int z, maage_column_update **output) {
+    maage_world_slot *slot = world ? maage_world_find(world, x, z) : NULL;
+    const maage_chunk *chunk;
+    maage_column_update *update;
+    maage_status result;
+    int section;
+    if (!output) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_WORLD, MAAGE_OPERATION_SNAPSHOT, 0);
+    *output = NULL;
+    if (!maage_world_complete(slot)) return maage_status_make(MAAGE_STATUS_NOOP, 0, MAAGE_OPERATION_SNAPSHOT, 0);
+    chunk = slot->data->chunk;
+    update = (maage_column_update *) calloc(1, sizeof(*update));
+    if (!update) return maage_status_make(MAAGE_STATUS_ALLOCATION_FAILED, MAAGE_CONTEXT_WORLD, MAAGE_OPERATION_SNAPSHOT, 0);
+    update->x = x;
+    update->z = z;
+    update->revision = slot->block_revision;
+    update->biomes = (maage_biome_id *) malloc(sizeof(chunk->biomes));
+    if (!update->biomes) {
+        maage_column_update_destroy(update);
+        return maage_status_make(MAAGE_STATUS_ALLOCATION_FAILED, MAAGE_CONTEXT_WORLD, MAAGE_OPERATION_SNAPSHOT, 0);
+    }
+    memcpy(update->biomes, chunk->biomes, sizeof(chunk->biomes));
+    for (section = 0; section < 16; ++section) {
+        const maage_section *part = chunk->sections[section];
+        if (part && !part->states && part->palette_count == 1U && part->palette[0] == chunk->air) continue;
+        result = maage_section_export(chunk->sections[section], &update->sections[section]);
+        if (maage_status_failed(result)) {
+            maage_column_update_destroy(update);
+            return result;
+        }
+    }
+    *output = update;
+    return maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_SNAPSHOT, 0);
+}
 maage_status maage_world_next_column(maage_world *world, maage_column_update **output) {
     maage_world_slot *slot, *chosen = NULL, *obsolete = NULL;
     maage_column_update *update;
@@ -3233,32 +3266,7 @@ maage_status maage_world_next_column(maage_world *world, maage_column_update **o
     }
     chunk = chosen->data->chunk;
     delta = chosen->sent_revision != 0;
-    if (!delta) {
-        maage_status result;
-        int section;
-        update = (maage_column_update *) calloc(1, sizeof(*update));
-        if (!update) return maage_status_make(MAAGE_STATUS_ALLOCATION_FAILED, MAAGE_CONTEXT_WORLD, MAAGE_OPERATION_SNAPSHOT, 0);
-        update->x = chosen->x;
-        update->z = chosen->z;
-        update->revision = chosen->block_revision;
-        update->biomes = (maage_biome_id *) malloc(sizeof(chunk->biomes));
-        if (!update->biomes) {
-            maage_column_update_destroy(update);
-            return maage_status_make(MAAGE_STATUS_ALLOCATION_FAILED, MAAGE_CONTEXT_WORLD, MAAGE_OPERATION_SNAPSHOT, 0);
-        }
-        memcpy(update->biomes, chunk->biomes, sizeof(chunk->biomes));
-        for (section = 0; section < 16; ++section) {
-            const maage_section *part = chunk->sections[section];
-            if (part && !part->states && part->palette_count == 1U && part->palette[0] == chunk->air) continue;
-            result = maage_section_export(chunk->sections[section], &update->sections[section]);
-            if (maage_status_failed(result)) {
-                maage_column_update_destroy(update);
-                return result;
-            }
-        }
-        *output = update;
-        return maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_SNAPSHOT, 0);
-    }
+    if (!delta) return maage_world_copy_column(world, chosen->x, chosen->z, output);
     for (byte = 0; byte < 8192; ++byte) {
         if (!chosen->transfer_cells || !chosen->transfer_cells[byte]) continue;
         for (bit = 0; bit < 8; ++bit)

@@ -45,10 +45,26 @@ int maage_base_lod_sampler_sample(maage_base_lod_sampler *sampler,
         z < -MAAGE_WORLD_LIMIT || z > MAAGE_WORLD_LIMIT) return 0;
     if (!maage_generation_sample_at(sampler->ids, sampler->seed, sampler->biomes,
             &sampler->policy, x, z, &sample, sampler->regions)) return 0;
-    column->height = sample.height;
+    column->canopy_height = 0;
+    column->canopy = sampler->ids->state_leaves;
+    /* Macro canopy cover follows biome decoration density on stable 8-block
+     * cells. This preserves forest masses, not individual generated trees. */
+    if (sample.height > sampler->policy.sea_level) {
+        int gx = x / 8, gz = z / 8, lx, lz;
+        unsigned long hash;
+        double density;
+        if (x % 8 < 0) --gx;
+        if (z % 8 < 0) --gz;
+        lx = x - gx * 8;
+        lz = z - gz * 8;
+        hash = maage_generation_feature_hash(sampler->seed, gx, gz, 14000UL);
+        density = sample.decoration.trees[0] + sample.decoration.trees[1] + sample.decoration.trees[2];
+        if ((double) (hash & 65535UL) / 65536.0 < density && lx > 0 && lx < 7 && lz > 0 && lz < 7) column->canopy_height = sample.height + 5 + (int) ((hash >> 16) & 3UL);
+    }
+    column->height = sample.height + 1;
     column->surface = sample.surface;
     column->biome = sample.biome;
-    column->water_height = sample.height < sampler->policy.sea_level ? sampler->policy.sea_level : 0;
+    column->water_height = sample.height < sampler->policy.sea_level ? sampler->policy.sea_level + 1 : 0;
     column->water = column->water_height ? sampler->ids->state_water : 0;
     return 1;
 }

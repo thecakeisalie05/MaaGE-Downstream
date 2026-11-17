@@ -1,6 +1,7 @@
 #ifndef MAAGE_CLIENT_DEBUG_H
 #define MAAGE_CLIENT_DEBUG_H
 #include "ui/ui.h"
+#include "distant_lod.h"
 #include "maage/session_protocol.h"
 
 typedef struct maage_client_mesh_stats {
@@ -24,6 +25,7 @@ typedef struct maage_client_debug {
     char memory[MAAGE_CLIENT_UI_DEBUG_CHARACTERS];
     char breakdown[MAAGE_CLIENT_UI_DEBUG_CHARACTERS];
     char workers[MAAGE_CLIENT_UI_DEBUG_CHARACTERS];
+    char lod[MAAGE_CLIENT_UI_DEBUG_CHARACTERS], shaders[MAAGE_CLIENT_UI_DEBUG_CHARACTERS];
 } maage_client_debug;
 /* Copied player/target observations are read from the latest Server snapshot. Performance uses
  * a 0.75-second exponential history, displayed at 250 ms intervals; native memory
@@ -40,5 +42,5 @@ typedef struct maage_client_debug {
  * World/renderer contraction; a no-op on other platforms. */
 void maage_client_debug_release_unused_memory(void);
 void maage_client_debug_frame(maage_client_debug *debug, double now, double elapsed, int presented, unsigned long ticks, double tick_seconds);
-const maage_client_ui_debug *maage_client_debug_collect(maage_client_debug *debug, double now, const maage_session_snapshot *snapshot, int radius, int paused, maage_renderer *renderer, const maage_client_mesh_stats *meshes, size_t client_world_bytes, const maage_biome_registry *biomes, const maage_dimension_registry *dimensions);
+const maage_client_ui_debug *maage_client_debug_collect(maage_client_debug *debug, double now, const maage_session_snapshot *snapshot, int radius, int paused, maage_renderer *renderer, const maage_client_mesh_stats *meshes, size_t client_world_bytes, const maage_biome_registry *biomes, const maage_dimension_registry *dimensions, const maage_distant_lod *distant, const maage_client_options *options);
 #endif

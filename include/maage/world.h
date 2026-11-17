@@ -259,6 +259,9 @@ typedef struct maage_column_update {
     maage_biome_id *biomes;            /* 256 entries on complete publications only */
     maage_column_section sections[16]; /* Complete publications only; no lighting. */
 } maage_column_update;
+/* Owner-only immutable copy of confirmed column data (excludes predictions).
+ * No World locks or worker waits. Caller destroys the returned packet. */
+maage_status maage_world_copy_column(const maage_world *world, int x, int z, maage_column_update **output);
 maage_status maage_world_next_column(maage_world *world, maage_column_update **output);
 /* Called after ownership transfer; reads copied identity fields only. */
 maage_status maage_world_ack_column(maage_world *world, const maage_column_update *update);

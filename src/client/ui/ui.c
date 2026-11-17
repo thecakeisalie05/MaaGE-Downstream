@@ -121,6 +121,9 @@ maage_status maage_client_ui_create(maage_renderer *renderer, maage_window *wind
     ui->chunk_fade_ms = MAAGE_CLIENT_CHUNK_FADE_DEFAULT_MS;
     ui->lod_enabled = 0;
     ui->lod_distance = MAAGE_CLIENT_LOD_DISTANCE_DEFAULT;
+    ui->shaders_enabled = 0;
+    ui->shader_quality = 1;
+    ui->shader_exposure = 100;
     ui->lod_quality = 1;
     ui->render_distance_max = MAAGE_CLIENT_RENDER_DISTANCE_SLIDER_MAX;
     ui->vsync = 1;
@@ -380,6 +383,9 @@ maage_status maage_client_ui_apply_options(maage_client_ui *ui, const maage_clie
     ui->fps_step = options->max_fps ? options->max_fps / 10 - 1 : 26;
     ui->render_distance = options->render_distance;
     ui->chunk_fade_ms = options->chunk_fade_ms >= 0 && options->chunk_fade_ms <= MAAGE_CLIENT_CHUNK_FADE_MAX_MS && !(options->chunk_fade_ms % MAAGE_CLIENT_CHUNK_FADE_STEP_MS) ? options->chunk_fade_ms : MAAGE_CLIENT_CHUNK_FADE_DEFAULT_MS;
+    ui->shaders_enabled = options->shaders_enabled;
+    ui->shader_quality = options->shader_quality;
+    ui->shader_exposure = options->shader_exposure;
     ui->lod_enabled = options->lod_enabled != 0;
     ui->lod_distance = options->lod_distance;
     if (ui->lod_distance < 1 || ui->lod_distance > MAAGE_CLIENT_LOD_DISTANCE_MAX) ui->lod_distance = MAAGE_CLIENT_LOD_DISTANCE_DEFAULT;
@@ -424,6 +430,9 @@ void maage_client_ui_get_options(const maage_client_ui *ui, maage_client_options
     options->max_fps = ui->fps_step == 26 ? 0 : (ui->fps_step + 1) * 10;
     options->render_distance = ui->render_distance;
     options->chunk_fade_ms = ui->chunk_fade_ms;
+    options->shaders_enabled = ui->shaders_enabled;
+    options->shader_quality = ui->shader_quality;
+    options->shader_exposure = ui->shader_exposure;
     options->lod_enabled = ui->lod_enabled;
     options->lod_distance = ui->lod_distance;
     options->lod_quality = ui->lod_quality;

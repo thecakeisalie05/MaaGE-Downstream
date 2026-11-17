@@ -7,6 +7,7 @@
 #include "maage/local_session.h"
 #include "maage/world.h"
 #include "options.h"
+#include "distant_lod.h"
 typedef struct maage_client_frontend maage_client_frontend;
 typedef struct maage_client_world_choice {
     char id[37], name[128], seed[64];
@@ -23,7 +24,7 @@ void maage_client_frontend_loading_progress(maage_client_frontend *front, const 
 /* Transfer ownership of an integrated session and its presentation replica
  * to a background cleanup job. The saving screen remains responsive while its
  * authoritative Server flushes; title appears only after cleanup completes. */
-maage_status maage_client_frontend_leave_world(maage_client_frontend *front, maage_server_runtime *server, maage_local_session *session, maage_world *visual, maage_status_trace *trace);
+maage_status maage_client_frontend_leave_world(maage_client_frontend *front, maage_server_runtime *server, maage_local_session *session, maage_world *visual, maage_distant_lod *distant, maage_status_trace *trace);
 /* Coalesce latest Client options on one independently owned disk writer. */
 maage_status maage_client_frontend_save_options(maage_client_frontend *front, const maage_client_options *options);
 maage_status maage_client_frontend_destroy(maage_client_frontend *front);

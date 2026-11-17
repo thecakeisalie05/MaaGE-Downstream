@@ -573,7 +573,7 @@ static void maage_client_environment_portal(maage_client_environment *view, cons
                 view->weather_vertices[first + corner].color[channel] = profile->color[channel];
     }
 }
-maage_status maage_client_environment_update(maage_client_environment *view, maage_renderer *renderer, const maage_session_snapshot *snapshot, float width, float height, const float view_projection[16], const maage_world *visual, const double camera[3], double yaw, double pitch, int first_person, int radius) {
+maage_status maage_client_environment_update(maage_client_environment *view, maage_renderer *renderer, const maage_session_snapshot *snapshot, float width, float height, const float view_projection[16], const maage_world *visual, const double camera[3], double yaw, double pitch, int first_person, int radius, int scene_radius) {
     const maage_client_environment_resource *resource;
     const maage_environment_state *state;
     const maage_fluid_definition *fluid;
@@ -627,7 +627,7 @@ maage_status maage_client_environment_update(maage_client_environment *view, maa
     if (!dimension->celestial) {
         result = maage_renderer_set_clear_color(renderer, dimension->fog[0], dimension->fog[1], dimension->fog[2], 1);
         if (maage_status_failed(result)) return result;
-        visibility = (double) radius * MAAGE_CHUNK_EDGE;
+        visibility = (double) scene_radius * MAAGE_CHUNK_EDGE;
         if (dimension->fog_distance > 0 && visibility > dimension->fog_distance) visibility = dimension->fog_distance;
         result = maage_renderer_set_distance_fog(renderer, dimension->fog[0], dimension->fog[1], dimension->fog[2], (float) (visibility * 0.2), (float) (visibility * 0.95));
         if (maage_status_failed(result)) return result;
@@ -647,7 +647,7 @@ maage_status maage_client_environment_update(maage_client_environment *view, maa
      * inscribed range and the actual camera offset, including third person. */
     camera_dx = fabs(camera[0] - snapshot->player.player.position[0]);
     camera_dz = fabs(camera[2] - snapshot->player.player.position[2]);
-    visibility = (double) radius * MAAGE_CHUNK_EDGE - (camera_dx > camera_dz ? camera_dx : camera_dz);
+    visibility = (double) scene_radius * MAAGE_CHUNK_EDGE - (camera_dx > camera_dz ? camera_dx : camera_dz);
     if (!(visibility > 0)) return maage_status_make(MAAGE_STATUS_INVALID_ARGUMENT, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_UPDATE, 0);
     result = maage_renderer_set_distance_fog(renderer, sky_color[0], sky_color[1], sky_color[2], (float) (visibility * 0.75), (float) (visibility * 0.95));
     if (maage_status_failed(result)) return result;

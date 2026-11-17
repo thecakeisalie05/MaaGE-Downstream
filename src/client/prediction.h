@@ -9,6 +9,7 @@
 typedef struct maage_client_chunk_mesh {
     int x, z, used, filtered, prepared_changed, prepared_filtered;
     int presented, first_frame;
+    unsigned long lod_observed_revision;
     unsigned long revision, visual_revision, presentation_generation, filtered_revision, filtered_generation;
     maage_render_mesh *mesh, *prediction, *prepared;
     maage_client_lod_mesh lod;

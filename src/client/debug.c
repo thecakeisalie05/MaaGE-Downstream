@@ -87,7 +87,7 @@ void maage_client_debug_frame(maage_client_debug *debug, double now, double elap
     debug->tick_ms = debug->ticks ? debug->tick_seconds * 1000.0 / debug->ticks : 0;
     debug->timing_ready = 1;
 }
-const maage_client_ui_debug *maage_client_debug_collect(maage_client_debug *debug, double now, const maage_session_snapshot *snapshot, int radius, int paused, maage_renderer *renderer, const maage_client_mesh_stats *meshes, size_t client_world_bytes, const maage_biome_registry *biomes, const maage_dimension_registry *dimensions) {
+const maage_client_ui_debug *maage_client_debug_collect(maage_client_debug *debug, double now, const maage_session_snapshot *snapshot, int radius, int paused, maage_renderer *renderer, const maage_client_mesh_stats *meshes, size_t client_world_bytes, const maage_biome_registry *biomes, const maage_dimension_registry *dimensions, const maage_distant_lod *distant, const maage_client_options *options) {
     const maage_dimension_definition *dimension;
     maage_client_ui_debug *text;
     const maage_client_metadata *identity = maage_client_identity();
@@ -142,6 +142,15 @@ const maage_client_ui_debug *maage_client_debug_collect(maage_client_debug *debu
                     (double) native_gpu_bytes / 1048576.0, (double) snapshot->world_stats.resident_storage_bytes / 1048576.0,
                     (double) client_world_bytes / 1048576.0);
         sprintf(debug->workers, "Workers: %.0f/%u | Chunks queued: %u", debug->busy_workers, stats->worker_count, stats->generation_queued + stats->meshing_queued + stats->lighting_queued + stats->io_queued);
+        {
+            maage_distant_lod_stats lod_stats;
+            maage_render_capabilities capabilities;
+            static const char *const quality[] = {"Performance", "Balanced", "Cinematic"};
+            maage_distant_lod_get_stats(distant, &lod_stats);
+            maage_renderer_get_capabilities(renderer, &capabilities);
+            sprintf(debug->lod, "LOD %s: %u tiles | %u jobs | %u upload | %.0f MiB est%s", options->lod_enabled && distant && snapshot->dimension == maage_dimension_primary(dimensions) ? "ON" : "OFF", lod_stats.resident, lod_stats.active, lod_stats.publication_backlog, (double) lod_stats.gpu_bytes_estimate / 1048576.0, lod_stats.budget_limited ? " (budget)" : "");
+            sprintf(debug->shaders, "Shaders: %s | %s | %d%%", capabilities.features & MAAGE_RENDER_CAP_NATIVE_SHADERS ? (options->shaders_enabled ? (capabilities.features & MAAGE_RENDER_CAP_NATIVE_HDR ? "HDR filmic" : "SDR") : "OFF") : "Unavailable", quality[options->shader_quality], options->shader_exposure);
+        }
         debug->measurement_after = now + 0.25;
     }
     x = (int) floor(player->position[0]);
@@ -173,6 +182,8 @@ const maage_client_ui_debug *maage_client_debug_collect(maage_client_debug *debu
     if (debug->gpu[0]) strcpy(text->right[right++], debug->gpu);
     if (stats->logical_processors) sprintf(text->right[right++], "CPU: %u logical cores", stats->logical_processors);
     strcpy(text->right[right++], debug->workers);
+    strcpy(text->right[right++], debug->lod);
+    strcpy(text->right[right++], debug->shaders);
     text->left_count = left;
     text->right_count = right;
     return text;

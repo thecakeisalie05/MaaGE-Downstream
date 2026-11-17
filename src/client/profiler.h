@@ -1,6 +1,7 @@
 #ifndef MAAGE_CLIENT_PROFILER_H
 #define MAAGE_CLIENT_PROFILER_H
 #include <stdio.h>
+#include "distant_lod.h"
 #define MAAGE_CLIENT_PROFILE_WINDOW 512
 typedef struct maage_client_profile_marks {
     double begin, input, scene, draw_begin, draw_end, upload_begin, end;
@@ -13,6 +14,8 @@ typedef struct maage_client_profiler {
     unsigned long frames, hitches;
     double window_start, last_frame_ms, p95_ms, max_ms;
     double last_input_ms, last_scene_ms, last_setup_ms, last_render_ms, last_upload_ms;
+    maage_distant_lod_stats lod;
+    int shaders_enabled, shader_quality, shader_exposure;
     int active;
 } maage_client_profiler;
 /* Optional and owner-thread-only. Timestamps measure elapsed CPU thread wall time;

@@ -144,7 +144,12 @@ static int maage_options_enabled(const maage_client_ui *ui, maage_client_ui_scre
     if (screen == MAAGE_CLIENT_UI_LOD_SETTINGS) return id < MAAGE_OPTIONS_LOD_COUNT;
     if (screen == MAAGE_CLIENT_UI_SOUND_SETTINGS) return id < MAAGE_OPTIONS_SOUND_COUNT;
     if (screen == MAAGE_CLIENT_UI_VIDEO_SETTINGS) {
-        if (id == 1U || id == 3U || id == 5U || id == 6U || id == 14U || id == 15U || id == 10U || id == MAAGE_OPTIONS_VIDEO_FADE || id == MAAGE_OPTIONS_VIDEO_DONE) return 1;
+        if (id == 0U || id == 2U || id == 8U) {
+            maage_render_capabilities capabilities;
+            maage_renderer_get_capabilities(ui->renderer, &capabilities);
+            return (capabilities.features & MAAGE_RENDER_CAP_NATIVE_SHADERS) != 0;
+        }
+        if (id == 0U || id == 2U || id == 8U || id == 1U || id == 3U || id == 5U || id == 6U || id == 14U || id == 15U || id == 10U || id == MAAGE_OPTIONS_VIDEO_FADE || id == MAAGE_OPTIONS_VIDEO_DONE) return 1;
         if (id == 12U) return ui->vsync_supported;
         if (id == 11U) return !ui->mode_pending && !ui->mode_changing;
         if (id == 16U) return ui->has_snapshot;
@@ -267,7 +272,7 @@ static void maage_options_action(maage_client_ui *ui, maage_client_ui_screen_id 
     } else if (screen == MAAGE_CLIENT_UI_LOD_SETTINGS) {
         if (id == 3U) ui->route_result = maage_client_ui_back(ui);
         else if (id == 0U) ui->lod_enabled = !ui->lod_enabled;
-        else if (id == 1U) ui->lod_distance = ui->lod_distance >= MAAGE_CLIENT_LOD_DISTANCE_MAX ? 8 : ui->lod_distance + 8;
+        else if (id == 1U) ui->lod_distance = ui->lod_distance >= MAAGE_CLIENT_LOD_DISTANCE_MAX ? 16 : (ui->lod_distance < 16 ? 16 : ui->lod_distance * 2);
         else if (id == 2U) ui->lod_quality = (ui->lod_quality + 1) % 3;
     } else if (screen == MAAGE_CLIENT_UI_SOUND_SETTINGS) {
         if (id == MAAGE_OPTIONS_SOUND_DONE) ui->route_result = maage_client_ui_back(ui);
@@ -276,6 +281,9 @@ static void maage_options_action(maage_client_ui *ui, maage_client_ui_screen_id 
     } else {
         if (id == MAAGE_OPTIONS_VIDEO_DONE) ui->route_result = maage_client_ui_back(ui);
         else if (id == 1U || id == 3U || id == MAAGE_OPTIONS_VIDEO_FADE) maage_options_adjust(ui, screen, id, 1);
+        else if (id == 0U) ui->shaders_enabled = !ui->shaders_enabled;
+        else if (id == 2U) ui->shader_quality = (ui->shader_quality + 1) % 3;
+        else if (id == 8U) ui->shader_exposure = ui->shader_exposure >= 200 ? 50 : ui->shader_exposure + 25;
         else if (id == 5U) ui->view_bobbing = !ui->view_bobbing;
         else if (id == 6U) maage_options_scale(ui, 1);
         else if (id == 10U) ui->route_result = maage_client_ui_open(ui, MAAGE_CLIENT_UI_LOD_SETTINGS);
@@ -389,7 +397,15 @@ static void maage_options_video_label(const maage_client_ui *ui, unsigned int id
     static const char *const leaves[3] = {"Fast", "Smart", "Fancy"};
     static const char *const modes[3] = {"Windowed", "Borderless", "Fullscreen"};
     const char *setting = id < 17U ? maage_video_unsupported[id] : "";
-    if (id == 10U) strcpy(text, "Level of Detail...");
+    if (id == 0U) {
+        maage_render_capabilities capabilities;
+        maage_renderer_get_capabilities(ui->renderer, &capabilities);
+        sprintf(text, "Shaders: %s", capabilities.features & MAAGE_RENDER_CAP_NATIVE_SHADERS ? (ui->shaders_enabled ? (capabilities.features & MAAGE_RENDER_CAP_NATIVE_HDR ? "ON (HDR)" : "ON (SDR)") : "OFF") : "Unavailable");
+    } else if (id == 2U) {
+        static const char *const quality[] = {"Performance", "Balanced", "Cinematic"};
+        sprintf(text, "Shader Quality: %s", quality[ui->shader_quality]);
+    } else if (id == 8U) sprintf(text, "Exposure: %d%%", ui->shader_exposure);
+    else if (id == 10U) strcpy(text, "Level of Detail...");
     else if (id == 1U) sprintf(text, "Render Distance: %d chunk%s", ui->render_distance, ui->render_distance == 1 ? "" : "s");
     else if (id == 3U) {
         if (ui->fps_step == 26) strcpy(text, "Max Framerate: Unlimited");

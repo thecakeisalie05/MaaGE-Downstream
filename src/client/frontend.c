@@ -20,6 +20,7 @@ typedef struct maage_front_options {
     int pending, stop;
 } maage_front_options;
 typedef struct maage_front_shutdown {
+    maage_distant_lod *distant;
     maage_server_runtime *server;
     maage_local_session *session;
     maage_world *visual;
@@ -112,6 +113,13 @@ static void front_shutdown_run(void *context, const maage_job_token *token) {
         return;
     }
     shutdown->server = NULL;
+    operation = maage_distant_lod_destroy(shutdown->distant);
+    if (maage_status_failed(operation)) {
+        shutdown->result = operation;
+        maage_job_set_result(token, operation);
+        return;
+    }
+    shutdown->distant = NULL;
     operation = maage_local_session_close(shutdown->session);
     if (maage_status_failed(operation) && !maage_status_failed(result)) result = operation;
     operation = maage_local_session_destroy(shutdown->session);
@@ -289,7 +297,7 @@ maage_status maage_client_frontend_run(maage_client_frontend *f, maage_window_sy
         }
         if (f->shutdown_active && maage_status_code(maage_jobs_poll(f->shutdown_jobs, &completion)) == MAAGE_STATUS_SUCCESS) {
             f->shutdown_active = 0;
-            f->shutdown_unsafe = f->shutdown.server || f->shutdown.session || f->shutdown.visual;
+            f->shutdown_unsafe = f->shutdown.server || f->shutdown.session || f->shutdown.visual || f->shutdown.distant;
             if (maage_client_ui_current(ui) == MAAGE_CLIENT_UI_SAVING) {
                 result = maage_client_ui_open_root(ui, MAAGE_CLIENT_UI_TITLE);
                 if (maage_status_failed(result)) return result;
@@ -397,13 +405,14 @@ maage_status maage_client_frontend_save_options(maage_client_frontend *f, const 
     maage_mutex_unlock(f->options.mutex);
     return maage_status_make(MAAGE_STATUS_SUCCESS, 0, MAAGE_OPERATION_SUBMIT, 0);
 }
-maage_status maage_client_frontend_leave_world(maage_client_frontend *f, maage_server_runtime *server, maage_local_session *session, maage_world *visual, maage_status_trace *trace) {
+maage_status maage_client_frontend_leave_world(maage_client_frontend *f, maage_server_runtime *server, maage_local_session *session, maage_world *visual, maage_distant_lod *distant, maage_status_trace *trace) {
     maage_job_id job;
     maage_status result;
     if (!f || !server || !session || !visual || f->shutdown_active || f->shutdown_unsafe) return maage_status_make(MAAGE_STATUS_INVALID_STATE, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_STOP, 0);
     f->shutdown.server = server;
     f->shutdown.session = session;
     f->shutdown.visual = visual;
+    f->shutdown.distant = distant;
     f->shutdown.result = 0;
     result = maage_jobs_submit(f->shutdown_jobs, 0, front_shutdown_run, &f->shutdown, &job, trace);
     if (maage_status_code(result) == MAAGE_STATUS_SUCCESS) f->shutdown_active = 1;
@@ -424,7 +433,7 @@ maage_status maage_client_frontend_destroy(maage_client_frontend *f) {
         if (maage_status_code(maage_jobs_poll(f->shutdown_jobs, &completion)) != MAAGE_STATUS_SUCCESS) return maage_status_make(MAAGE_STATUS_INVALID_STATE, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_STOP, 0);
         f->shutdown_active = 0;
     }
-    if (f->shutdown.server || f->shutdown.session || f->shutdown.visual) return maage_status_make(MAAGE_STATUS_INVALID_STATE, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_DESTROY, 0);
+    if (f->shutdown.server || f->shutdown.session || f->shutdown.visual || f->shutdown.distant) return maage_status_make(MAAGE_STATUS_INVALID_STATE, MAAGE_CONTEXT_CLIENT, MAAGE_OPERATION_DESTROY, 0);
     /* A confirmed mutation remains owned even if the title window closes. */
     if (f->io_pending) {
         result = maage_jobs_submit(f->jobs, 0, front_io_run, &f->io, &job, NULL);

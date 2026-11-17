@@ -73,3 +73,11 @@ add_custom_target(maage_client_manifest ALL COMMAND ${MAAGE_CLIENT_METADATA_COMM
 # A focused maage_client build must also produce its import descriptor.
 add_custom_command(TARGET maage_client POST_BUILD COMMAND ${MAAGE_CLIENT_METADATA_COMMAND} VERBATIM)
 install(FILES "${MAAGE_CLIENT_MANIFEST}" DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT Runtime)
+
+# Explicit offline checks; never part of normal builds or graphical startup.
+option(MAAGE_BUILD_CLIENT_CHECKS "Build offline native shader/LOD regression checks" OFF)
+if(MAAGE_BUILD_CLIENT_CHECKS)
+    add_executable(maage_client_lod_checks EXCLUDE_FROM_ALL lod_checks.c lod.c ../application/content_modules.c)
+    maage_configure_portable_target(maage_client_lod_checks)
+    target_link_libraries(maage_client_lod_checks PRIVATE MaaGE::Base MaaGE::World MaaGE::Render MaaGE::Instance)
+endif()
