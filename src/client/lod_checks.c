@@ -137,6 +137,14 @@ static void check_effect_material_pack(void) {
     assert(packed[0].padding[0] == 0 && packed[1].padding[0] == 0 && packed[2].padding[0] == 255 && packed[3].padding[0] == 255);
     assert(((unsigned int) prepared->surfaces[0].material_rotation / MAAGE_MESH_MATERIAL_COUNT >> MAAGE_MESH_EFFECT_SHIFT) == MAAGE_MESH_EFFECT_ROOTED);
     maage_mesh_preparation_destroy(prepared);
+    for (i = 0; i < 4; ++i) {
+        vertices[i].rotation_face = MAAGE_MESH_EFFECT_WATER << MAAGE_MESH_EFFECT_SHIFT;
+        vertices[i].position[1] = i >= 2 ? 0.875f : 0.0f;
+    }
+    assert(!maage_status_failed(maage_mesh_prepare(&data, &prepared)));
+    maage_render_mesh_pack_span(prepared, 0, sizeof(packed), packed);
+    assert(packed[0].padding[1] == 0 && packed[1].padding[1] == 0 && packed[2].padding[1] == 255 && packed[3].padding[1] == 255);
+    maage_mesh_preparation_destroy(prepared);
 }
 static void check_shader_effects(const char *directory) {
     maage_shader_settings settings, saved;

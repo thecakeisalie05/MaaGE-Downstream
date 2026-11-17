@@ -53,7 +53,11 @@ void main()
     if ((effect_flags & 4U) != 0U && effect.wind.z > 0.5) {
         vec2 screen = gl_FragCoord.xy * effect.viewport.zw;
         float t = effect.camera_time.w;
-        vec3 wave = normalize(n + vec3(sin(maage_world_position.x * 1.6 + t * 1.3) * 0.09, 0.0, cos(maage_world_position.z * 1.4 - t) * 0.09));
+        vec2 slope = effect_water_wave(maage_world_position.xz).yz;
+        /* Smaller capillary ripples remain visible after geometric LOD fades. */
+        slope += (vec2(2.7, 1.3) * cos(dot(maage_world_position.xz, vec2(2.7, 1.3)) - t * 3.6) * 0.006 + vec2(-1.8, 3.1) * cos(dot(maage_world_position.xz, vec2(-1.8, 3.1)) - t * 4.2) * 0.005) * (1.0 + effect.weather.x);
+        vec3 wave = abs(n.y) > 0.5 ? normalize(vec3(-slope.x, 1.0, -slope.y)) : normalize(n + vec3(-slope.x, 0.0, -slope.y) * 0.3);
+        if (dot(wave, view) < 0.0) wave = -wave;
         vec2 refract_uv = clamp(screen + wave.xz * 0.012, vec2(0.001), vec2(0.999));
         float z = texture(opaque_depth, refract_uv).r;
         if (z < gl_FragCoord.z) refract_uv = screen;

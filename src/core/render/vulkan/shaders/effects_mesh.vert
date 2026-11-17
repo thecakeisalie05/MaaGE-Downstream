@@ -31,6 +31,7 @@ void main()
     vec4 world = effect.inverse_view_projection * original;
     uint flags = uint(entries[surface * 2U].w) / uint(MAAGE_MESH_MATERIAL_COUNT) >> 3U;
     vec3 displaced = effect_wind(world.xyz / world.w, wind_weight.x, flags);
+    if ((flags & 4U) != 0U && effect.wind.z > 0.5) displaced.y += effect_water_wave(displaced.xz).x * wind_weight.y * effect_water_fade(displaced);
     effect_flags = flags;
     source_position = position;
     gl_Position = effect.view_projection * vec4(displaced, 1.0);

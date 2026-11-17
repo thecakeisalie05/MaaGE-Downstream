@@ -778,10 +778,8 @@ static size_t maage_mesh_generate(const maage_block_registry *registry, const ma
                             else maage_mesh_lighting(registry, chunk, neighbors, x, y, z, crossed ? MAAGE_FACE_POSITIVE_Y : face, boundary || (model == MAAGE_BLOCK_MESH_CUBE && current->use_neighbor_brightness && face == MAAGE_FACE_POSITIVE_Y), 0, smooth, state->emitted_light, &illumination);
                             maage_mesh_face(vertices, indices, face_count, chunk->x * 16 + x, y, chunk->z * 16 + z, face, definition, uv, &face_shape, model, state->geometry_variant, log_axis, material, tint_mode ? colors[tint_mode] : neutral, tint_mode && blend >= MAAGE_BIOME_BLEND_SMOOTH_5, animation, state->fluid_kind ? fluid_heights : NULL, flow, &illumination);
                             mergeable = !state->fluid_kind && material == MAAGE_MESH_MATERIAL_OPAQUE;
-                            /* Flat still-fluid tops share one repeated tile and
-                             * can use the same section-local rectangles. Keep
-                             * sloped/flowing surfaces on the original path. */
-                            if (state->fluid_kind && material == MAAGE_MESH_MATERIAL_TRANSLUCENT && face == MAAGE_FACE_POSITIVE_Y && !flow && fluid_flow[0] == 0 && fluid_flow[1] == 0 && fluid_heights[0] == fluid_heights[1] && fluid_heights[0] == fluid_heights[2] && fluid_heights[0] == fluid_heights[3]) mergeable = 1;
+                            /* Keep the existing block grid for water displacement.
+                             * Coarse independent LOD retains its own simplification. */
                             if (!overlay && !reverse && mergeable && model == MAAGE_BLOCK_MESH_CUBE && log_axis < 0 && uv[2] > uv[0] && uv[3] > uv[1] && face_shape.minimum[0] == 0 && face_shape.minimum[1] == 0 && face_shape.minimum[2] == 0 && face_shape.maximum[0] == 1 && face_shape.maximum[1] == 1 && face_shape.maximum[2] == 1) {
                                 maage_mesh_vertex *quad = vertices + face_count * 4;
                                 /* Rotation uses repeated local UVs even with varying corner light.

@@ -425,6 +425,12 @@ void maage_render_mesh_pack_span(const maage_mesh_preparation *prepared, size_t 
             }
             packed.padding[0] = maage_render_unit_channel(maximum > minimum ? (source->position[1] - minimum) / (maximum - minimum) : 0);
         } else if ((source->rotation_face >> MAAGE_MESH_EFFECT_SHIFT) & MAAGE_MESH_EFFECT_FOLIAGE) packed.padding[0] = 255;
+        if ((source->rotation_face >> MAAGE_MESH_EFFECT_SHIFT) & MAAGE_MESH_EFFECT_WATER) {
+            /* Fractional surface edges move together; integer layer boundaries
+             * and submerged bottoms stay fixed, including stacked waterfalls. */
+            double fraction = source->position[1] - floor(source->position[1]);
+            packed.padding[1] = fraction > 0.002 && fraction < 0.9999 ? 255 : 0;
+        }
         packed.surface = prepared->surface_indices[vertex];
         memcpy(target, (const unsigned char *) &packed + start, part);
         target += part;

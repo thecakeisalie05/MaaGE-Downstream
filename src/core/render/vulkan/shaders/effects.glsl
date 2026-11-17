@@ -24,6 +24,24 @@ vec3 effect_wind(vec3 p, float weight, uint flags) {
     p.xz += vec2(wave, sin(t * 1.6 + p.x * 0.65 + p.z * 0.7)) * weight * effect.wind.x * 0.2 * gust * fade * ((flags & 1U) != 0U ? 1.0 : 0.55);
     return p;
 }
+/* Directional gravity waves: height and analytic X/Z derivatives share the
+ * same phase for geometry, reflection and refraction. Downward-only excursion
+ * keeps the simulated shoreline as the maximum water level. */
+vec3 effect_water_wave(vec2 p) {
+    float t = effect.camera_time.w;
+    vec3 wave = vec3(0.0);
+    const vec2 directions[3] = vec2[3](vec2(0.94, 0.342), vec2(-0.48, 0.877), vec2(0.20, -0.980));
+    const float lengths[3] = float[3](28.0, 17.0, 9.0);
+    const float amplitudes[3] = float[3](0.055, 0.028, 0.012);
+    for (int i = 0; i < 3; ++i) {
+        float k = 6.2831853 / lengths[i];
+        float phase = dot(p, directions[i]) * k - sqrt(9.81 * k) * t;
+        wave.x += amplitudes[i] * (sin(phase) - 1.0);
+        wave.yz += amplitudes[i] * k * cos(phase) * directions[i];
+    }
+    return wave * (0.7 + effect.wind.x * 0.3 + effect.weather.x * 0.25);
+}
+float effect_water_fade(vec3 p) { return 1.0 - smoothstep(64.0, 128.0, length(p - effect.camera_time.xyz)); }
 float effect_cascade(vec3 p, vec3 n, int cascade, int side) {
     vec4 q = effect.shadows[cascade] * vec4(p, 1.0);
     vec3 c = q.xyz / q.w;
