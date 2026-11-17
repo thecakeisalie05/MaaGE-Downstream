@@ -2139,11 +2139,14 @@ choose_world:
         }
         profile_marks.draw_end = profiler.active ? maage_time_monotonic_seconds() : 0;
         if (scene_capture.path && maage_status_code(rendered) == MAAGE_STATUS_SUCCESS) {
-            maage_distant_lod_stats capture_lod;
             int ready;
-            maage_distant_lod_get_stats(distant_lod, &capture_lod);
-            ready = !loading_terrain && !latest.travelling && latest.paused && !cache.upload_mesh && !first_count && !visual_stats.running_jobs && !visual_stats.completed_uncommitted_jobs && !latest.world_stats.completed_uncommitted_jobs && !visual_stats.meshing_queued && !visual_stats.lighting_queued && !latest.world_stats.generation_queued && !latest.world_stats.generation_running && (!video_options.lod_enabled || (!capture_lod.active && !capture_lod.publication_backlog));
-            scene_capture.settled = ready ? scene_capture.settled + 1 : 0;
+            /* Global generation, lighting and distant LOD queues may remain busy
+             * after the viewport is ready. Settle submitted visible geometry,
+             * not unrelated background work; distant tiles may refine later. */
+            ready = !loading_terrain && !latest.travelling && latest.paused &&
+                    !cache.upload_mesh && !first_count && now - scene_capture.started >= 1.0;
+            scene_capture.settled = ready && draw_count == scene_capture.previous_draw_count ? scene_capture.settled + 1 : 0;
+            scene_capture.previous_draw_count = draw_count;
             if (scene_capture.settled >= 24) {
                 operation = maage_client_scene_save(&scene_capture, renderer, &video_options, &latest, options.id, camera_eye, camera_yaw, camera_pitch, trace);
                 if (maage_status_failed(operation)) {
